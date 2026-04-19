@@ -1,0 +1,12 @@
+[project]
+name = "frontier-swe-openenv"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "openenv-core",
+]
+
+[tool.uv.sources]
+openenv-core = { git = "https://github.com/rycerzes/OpenEnv", branch = "feature/pi-harness-adapter" }
