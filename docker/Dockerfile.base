@@ -1,0 +1,73 @@
+# OpenEnv Base Image
+#
+# Shared base for ALL FrontierSWE-OpenEnv task images.
+# Contains: system essentials, Bun, pi, pi-mcp-adapter, 
+# OpenEnv server framework (Python venv + deps).
+#
+# Task images (Dockerfile.pg, Dockerfile.pyright, Dockerfile.notebook)
+# extend FROM this.
+#
+# Build:
+#   docker build -f docker/Dockerfile.base -t openenv-base:latest .
+
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+ENV PYTHONUNBUFFERED=1
+
+# ---- System deps common to all tasks ----
+# build-essential: needed by Zig (PG), npm native modules (Pyright), etc.
+# git: diff tracking for L2 code review
+# netcat-openbsd: gate checks (TCP probe)
+# python3 + pip + venv: OpenEnv server
+# procps: ps, kill (process management)
+# curl, ca-certificates, xz-utils: downloading toolchains
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    git \
+    netcat-openbsd \
+    pkg-config \
+    procps \
+    python3 \
+    python3-pip \
+    python3-venv \
+    unzip \
+    wget \
+    xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/uv \
+    && mv /root/.local/bin/uvx /usr/local/bin/uvx
+
+RUN curl -fsSL https://bun.sh/install | bash
+ENV BUN_INSTALL="/root/.bun"
+ENV PATH="${BUN_INSTALL}/bin:${PATH}"
+
+RUN bun install -g @mariozechner/pi-coding-agent
+
+RUN pi install npm:pi-mcp-adapter
+
+RUN python3 -m venv /opt/openenv-venv
+ENV PATH="/opt/openenv-venv/bin:${PATH}"
+
+RUN pip install --no-cache-dir \
+    "openenv-core @ git+https://github.com/rycerzes/OpenEnv@feature/pi-harness-adapter" \
+    fastmcp \
+    uvicorn \
+    fastapi \
+    httpx \
+    pydantic
+
+RUN mkdir -p /app /logs/verifier /logs/agent /opt/verifier
+
+COPY docker/openenv_entrypoint.sh /app/openenv_entrypoint.sh
+RUN chmod +x /app/openenv_entrypoint.sh
+
+WORKDIR /app
+EXPOSE 8000
+ENTRYPOINT ["/app/openenv_entrypoint.sh"]

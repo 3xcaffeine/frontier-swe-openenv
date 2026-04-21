@@ -1,0 +1,115 @@
+# PostgreSQL Wire Adapter — Task Image
+#
+# Extends openenv-base with PG-specific tooling:
+#   Zig 0.15.2, PostgreSQL 18 client/docs, SQLite3, Perl test deps,
+#   task workspace, visible + hidden test scripts, gate checks.
+#
+# Build (must build base first):
+#   docker build -f docker/Dockerfile.base -t openenv-base:latest .
+#   docker build -f docker/Dockerfile.pg -t frontier-swe-pg:latest .
+#
+# Run:
+#   docker run -p 8000:8000 frontier-swe-pg:latest
+
+FROM openenv-base:latest
+
+ENV ZIG_VERSION=0.15.2
+ENV PG_MAJOR=18
+ENV PG_VERSION=18.3
+ENV PG_PKG_VERSION=18.3-1.pgdg12+1
+ENV TASK_BUDGET_SECS=28800
+
+# PG-specific system deps
+# bison, flex: PG test harness build
+# libipc-run-perl, libjson-perl, libtest-simple-perl, perl: PG TAP test harness
+# libsqlite3-dev: SQLite backend for the adapter
+# w3m: text browser for offline PG docs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bison \
+    flex \
+    libipc-run-perl \
+    libjson-perl \
+    libsqlite3-dev \
+    libtest-simple-perl \
+    perl \
+    w3m \
+    && rm -rf /var/lib/apt/lists/*
+
+# PostgreSQL 18 server + client + docs
+RUN install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    && . /etc/os-release \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+    > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    "postgresql-${PG_MAJOR}=${PG_PKG_VERSION}" \
+    "postgresql-client-${PG_MAJOR}=${PG_PKG_VERSION}" \
+    "postgresql-doc-${PG_MAJOR}=${PG_PKG_VERSION}" \
+    && rm -rf /var/lib/apt/lists/*
+
+# Zig 0.15.2 (multi-arch)
+RUN set -eu; \
+    arch="$(uname -m)"; \
+    case "${arch}" in \
+    x86_64)  zig_triple="x86_64-linux" ;; \
+    aarch64) zig_triple="aarch64-linux" ;; \
+    *) echo "unsupported arch: ${arch}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-${zig_triple}-${ZIG_VERSION}.tar.xz" \
+    | tar -xJ -C /opt; \
+    ln -sf "/opt/zig-${zig_triple}-${ZIG_VERSION}/zig" /usr/local/bin/zig; \
+    zig version
+
+# PG offline docs
+RUN mkdir -p /reference/postgresql-docs \
+    && cp -R "/usr/share/doc/postgresql-doc-${PG_MAJOR}/html" /reference/postgresql-docs/html
+
+# Hide real PG server binaries
+# Verifier reconstructs a PG 18 harness from these; agent can't use them
+RUN set -eu; \
+    pg_bin="/usr/lib/postgresql/${PG_MAJOR}/bin"; \
+    hidden_bin="/verifier-data/postgresql${PG_MAJOR}-hidden/bin"; \
+    mkdir -p "${hidden_bin}"; \
+    for name in postgres initdb pg_ctl; do \
+    mv "${pg_bin}/${name}" "${hidden_bin}/${name}"; \
+    done; \
+    chmod 700 /verifier-data
+
+# Task workspace
+COPY tasks/postgres-sqlite-wire-adapter/environment/workspace/ /app/
+RUN chmod +x /app/entrypoint.sh /app/timer.sh /app/smoke_test.sh /app/postgres-sqlite/build.sh
+RUN mkdir -p /app/postgres-sqlite
+
+# Shell env for PG paths
+RUN echo 'export PGSQL_DOCS_DIR="/reference/postgresql-docs/html"' >> /etc/bash.bashrc \
+    && echo 'export PATH="/usr/lib/postgresql/'"${PG_MAJOR}"'/bin:$PATH"' >> /etc/bash.bashrc
+
+# OpenEnv environment code
+COPY frontier_swe_env/ /opt/openenv/frontier_swe_env/
+COPY pyproject.toml /opt/openenv/pyproject.toml
+ENV PYTHONPATH="/opt/openenv:${PYTHONPATH:-}"
+
+# Gate check script
+COPY scripts/pg_gate_checks.sh /app/gate_checks.sh
+RUN chmod +x /app/gate_checks.sh
+
+# Visible tests (72 graded, 9 tiers)
+COPY tasks/postgres-sqlite-wire-adapter/tests/pg_compat_test.sh /app/pg_compat_test.sh
+RUN chmod +x /app/pg_compat_test.sh
+
+# Hidden verifier (demo mode)
+COPY tasks/postgres-sqlite-wire-adapter/tests/test.sh /opt/verifier/test.sh
+COPY tasks/postgres-sqlite-wire-adapter/tests/compute_reward.py /opt/verifier/compute_reward.py
+COPY tasks/postgres-sqlite-wire-adapter/tests/hidden/ /opt/verifier/hidden/
+RUN chmod +x /opt/verifier/test.sh
+
+# Full instruction (demo mode)
+COPY tasks/postgres-sqlite-wire-adapter/instruction.md /opt/task/instruction.md
+
+# Git baseline for L2 diff tracking
+RUN cd /app/postgres-sqlite && git init && git add -A && git commit -m "initial stub"
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
