@@ -5,8 +5,10 @@ description = "OpenEnv environment for FrontierSWE tasks"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "fastapi[standard]>=0.136.0",
+    "openai>=2.32.0",
     "openenv-core",
 ]
 
 [tool.uv.sources]
-openenv-core = { git = "https://github.com/rycerzes/OpenEnv", branch = "feature/pi-harness-adapter" }
+openenv-core = { git = "https://github.com/rycerzes/OpenEnv", rev = "ff48ff3097ed38f616d380ba49c0eb4a198d603f" }
