@@ -7,10 +7,15 @@
 """Frontier Swe Env Environment."""
 
 from .client import FrontierSweEnv
-from .models import FrontierSweAction, FrontierSweObservation
+from .models import EpisodeState, FrontierSweAction, FrontierSweObservation
+from .task_config import TaskConfig, pg_demo_config, pg_training_config
 
 __all__ = [
+    "EpisodeState",
     "FrontierSweAction",
-    "FrontierSweObservation",
     "FrontierSweEnv",
+    "FrontierSweObservation",
+    "TaskConfig",
+    "pg_demo_config",
+    "pg_training_config",
 ]
