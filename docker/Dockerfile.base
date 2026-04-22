@@ -1,7 +1,7 @@
 # OpenEnv Base Image
 #
 # Shared base for ALL FrontierSWE-OpenEnv task images.
-# Contains: system essentials, Bun, pi, pi-mcp-adapter, 
+# Contains: system essentials, Node.js, pi, pi-mcp-adapter,
 # OpenEnv server framework (Python venv + deps).
 #
 # Task images (Dockerfile.pg, Dockerfile.pyright, Dockerfile.notebook)
@@ -44,11 +44,12 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && mv /root/.local/bin/uv /usr/local/bin/uv \
     && mv /root/.local/bin/uvx /usr/local/bin/uvx
 
-RUN curl -fsSL https://bun.sh/install | bash
-ENV BUN_INSTALL="/root/.bun"
-ENV PATH="${BUN_INSTALL}/bin:${PATH}"
+# Node.js LTS (v22) via NodeSource
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN bun install -g @mariozechner/pi-coding-agent
+RUN npm install -g @mariozechner/pi-coding-agent
 
 RUN pi install npm:pi-mcp-adapter
 

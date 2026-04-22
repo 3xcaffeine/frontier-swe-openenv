@@ -89,7 +89,7 @@ RUN echo 'export PGSQL_DOCS_DIR="/reference/postgresql-docs/html"' >> /etc/bash.
 # OpenEnv environment code
 COPY frontier_swe_env/ /opt/openenv/frontier_swe_env/
 COPY pyproject.toml /opt/openenv/pyproject.toml
-ENV PYTHONPATH="/opt/openenv:${PYTHONPATH:-}"
+ENV PYTHONPATH="/opt/openenv"
 
 # Gate check script
 COPY scripts/pg_gate_checks.sh /app/gate_checks.sh
@@ -109,7 +109,10 @@ RUN chmod +x /opt/verifier/test.sh
 COPY tasks/postgres-sqlite-wire-adapter/instruction.md /opt/task/instruction.md
 
 # Git baseline for L2 diff tracking
-RUN cd /app/postgres-sqlite && git init && git add -A && git commit -m "initial stub"
+RUN cd /app/postgres-sqlite \
+    && git config --global user.email "agent@frontier-swe-openenv" \
+    && git config --global user.name "agent" \
+    && git init && git add -A && git commit -m "initial stub"
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
