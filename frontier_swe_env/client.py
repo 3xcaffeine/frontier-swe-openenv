@@ -4,96 +4,53 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""Frontier Swe Env Environment Client."""
+"""Frontier SWE Environment Client."""
 
-from typing import Dict
+from typing import Any, Dict
 
 from openenv.core import EnvClient
 from openenv.core.client_types import StepResult
-from openenv.core.env_server.types import State
 
-from .models import FrontierSweAction, FrontierSweObservation
+from .models import EpisodeState, FrontierSweAction, FrontierSweObservation
 
 
 class FrontierSweEnv(
-    EnvClient[FrontierSweAction, FrontierSweObservation, State]
+    EnvClient[FrontierSweAction, FrontierSweObservation, EpisodeState]
 ):
     """
-    Client for the Frontier Swe Env Environment.
+    Client for the Frontier SWE Environment.
 
-    This client maintains a persistent WebSocket connection to the environment server,
-    enabling efficient multi-step interactions with lower latency.
-    Each client instance has its own dedicated environment session on the server.
+    Maintains a persistent WebSocket connection to the environment server.
+    Each client instance has its own dedicated environment session.
 
     Example:
-        >>> # Connect to a running server
-        >>> with FrontierSweEnv(base_url="http://localhost:8000") as client:
-        ...     result = client.reset()
-        ...     print(result.observation.echoed_message)
+        >>> async with FrontierSweEnv(base_url="http://localhost:8000") as client:
+        ...     result = await client.reset()
+        ...     print(result.observation.phase)  # "PLANNING"
         ...
-        ...     result = client.step(FrontierSweAction(message="Hello!"))
-        ...     print(result.observation.echoed_message)
+        ...     result = await client.step(FrontierSweAction(message="Hello"))
+        ...     print(result.observation.response)
 
     Example with Docker:
-        >>> # Automatically start container and connect
-        >>> client = FrontierSweEnv.from_docker_image("frontier_swe_env-env:latest")
+        >>> client = await FrontierSweEnv.from_docker_image("frontier-swe-pg:latest")
         >>> try:
-        ...     result = client.reset()
-        ...     result = client.step(FrontierSweAction(message="Test"))
+        ...     result = await client.reset()
+        ...     result = await client.step(FrontierSweAction(message="Test"))
         ... finally:
-        ...     client.close()
+        ...     await client.close()
     """
 
-    def _step_payload(self, action: FrontierSweAction) -> Dict:
-        """
-        Convert FrontierSweAction to JSON payload for step message.
+    def _step_payload(self, action: FrontierSweAction) -> Dict[str, Any]:
+        return action.model_dump()
 
-        Args:
-            action: FrontierSweAction instance
-
-        Returns:
-            Dictionary representation suitable for JSON encoding
-        """
-        return {
-            "message": action.message,
-        }
-
-    def _parse_result(self, payload: Dict) -> StepResult[FrontierSweObservation]:
-        """
-        Parse server response into StepResult[FrontierSweObservation].
-
-        Args:
-            payload: JSON response data from server
-
-        Returns:
-            StepResult with FrontierSweObservation
-        """
+    def _parse_result(self, payload: Dict[str, Any]) -> StepResult[FrontierSweObservation]:
         obs_data = payload.get("observation", {})
-        observation = FrontierSweObservation(
-            echoed_message=obs_data.get("echoed_message", ""),
-            message_length=obs_data.get("message_length", 0),
-            done=payload.get("done", False),
-            reward=payload.get("reward"),
-            metadata=obs_data.get("metadata", {}),
-        )
-
+        observation = FrontierSweObservation(**obs_data)
         return StepResult(
             observation=observation,
             reward=payload.get("reward"),
             done=payload.get("done", False),
         )
 
-    def _parse_state(self, payload: Dict) -> State:
-        """
-        Parse server response into State object.
-
-        Args:
-            payload: JSON response from state request
-
-        Returns:
-            State object with episode_id and step_count
-        """
-        return State(
-            episode_id=payload.get("episode_id"),
-            step_count=payload.get("step_count", 0),
-        )
+    def _parse_state(self, payload: Dict[str, Any]) -> EpisodeState:
+        return EpisodeState(**payload)
