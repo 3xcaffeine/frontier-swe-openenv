@@ -25,6 +25,15 @@ class TaskConfig(BaseModel):
     subtask_weight: float = 0.60
     completion_weight: float = 0.10
     tool_weight: float = 0.05
+    # Agent LLM config (the model pi uses — the one being trained/evaluated)
+    agent_model: str | None = None
+    agent_provider: str | None = None
+    agent_api_base_url: str | None = None
+    agent_api_key: str | None = None
+    # LLM judge config (L2/L3 rubrics — a separate, typically stronger model)
+    grader_model: str | None = None
+    grader_api_base_url: str | None = None
+    grader_api_key: str | None = None
     # Container config
     container_port: int = 8000
     cpus: int = 8

@@ -68,10 +68,47 @@ class FrontierSweEnvironment(MCPEnvironment):
         self.test_rubric = PGCompatTestRubric(
             test_command=self.task_config.visible_test_command,
         )
+
+        # Resolve grader LLM config.
+        # Priority: env vars > TaskConfig fields > hardcoded default.
+        #
+        # Env vars (all prefixed FSWE_GRADER_*):
+        #   FSWE_GRADER_MODEL    — model name for L2/L3 LLM judge
+        #   FSWE_GRADER_API_URL  — OpenAI-compatible base URL
+        #   FSWE_GRADER_API_KEY  — API key
+        import os
+
+        grader_model = (
+            os.environ.get("FSWE_GRADER_MODEL")
+            or self.task_config.grader_model
+        )
+        grader_api_base = (
+            os.environ.get("FSWE_GRADER_API_URL")
+            or self.task_config.grader_api_base_url
+        )
+        grader_api_key = (
+            os.environ.get("FSWE_GRADER_API_KEY")
+            or self.task_config.grader_api_key
+            or os.environ.get("OPENAI_API_KEY")
+        )
+
+        logger.info(
+            "Grader LLM config: model=%s, api_base=%s",
+            grader_model,
+            grader_api_base,
+        )
+
         self.l2_rubric = L2CodeReviewRubric(
             workspace_dir=self.task_config.workspace_dir,
+            grader_model=grader_model,
+            api_base_url=grader_api_base,
+            api_key=grader_api_key,
         )
-        self.l3_rubric = L3PlanReviewRubric()
+        self.l3_rubric = L3PlanReviewRubric(
+            grader_model=grader_model,
+            api_base_url=grader_api_base,
+            api_key=grader_api_key,
+        )
         self.episode_rubric = EpisodeRubric.from_config(self.task_config)
 
         # Pi harness adapter (created fresh each reset)
@@ -121,16 +158,59 @@ class FrontierSweEnvironment(MCPEnvironment):
         )
 
         # Create pi harness adapter
+        #
+        # Agent LLM config resolution (env vars > TaskConfig):
+        #   FSWE_AGENT_MODEL     — model name pi should use
+        #   FSWE_AGENT_PROVIDER  — pi provider (openai, anthropic, google, …)
+        #   FSWE_AGENT_API_URL   — OpenAI-compatible base URL
+        #   FSWE_AGENT_API_KEY   — API key for the agent endpoint
+        import os
+
+        agent_model = (
+            os.environ.get("FSWE_AGENT_MODEL")
+            or self.task_config.agent_model
+        )
+        agent_provider = (
+            os.environ.get("FSWE_AGENT_PROVIDER")
+            or self.task_config.agent_provider
+        )
+        agent_api_url = (
+            os.environ.get("FSWE_AGENT_API_URL")
+            or self.task_config.agent_api_base_url
+        )
+        agent_api_key = (
+            os.environ.get("FSWE_AGENT_API_KEY")
+            or self.task_config.agent_api_key
+            or os.environ.get("OPENAI_API_KEY")
+        )
+
+        # Build env vars to pass to the pi subprocess
+        pi_env: dict[str, str] = {}
+        if agent_api_url:
+            pi_env["OPENAI_BASE_URL"] = agent_api_url
+        if agent_api_key:
+            pi_env["OPENAI_API_KEY"] = agent_api_key
+
         harness_config = HarnessConfig(
             name="pi",
             command=["pi"],
             working_directory=self.task_config.workspace_dir,
             session_timeout_s=self.task_config.episode_timeout_s,
             startup_timeout_s=30.0,
+            model=agent_model,
+            env_vars=pi_env,
         )
         self.adapter = PiHarnessAdapter(
             config=harness_config,
             mcp_server_url=f"http://localhost:{self.task_config.container_port}/mcp",
+            provider=agent_provider,
+        )
+
+        logger.info(
+            "Agent LLM config: model=%s, provider=%s, api_url=%s",
+            agent_model,
+            agent_provider,
+            agent_api_url,
         )
 
         # Inject MCP tools and start pi
