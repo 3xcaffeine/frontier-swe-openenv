@@ -4,13 +4,15 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""FastMCP server with 4 episode-management tools for the FrontierSWE environment.
+"""
+MCP tool definitions for the Frontier SWE Environment.
 
-Tools:
-    submit_plan  — Propose a subtask plan (PLANNING → EXECUTING)
-    submit_subtask — Submit current subtask for scoring
-    get_status   — Get current episode status snapshot
-    advance      — Freeze subtask score and move to the next one
+Tools are registered on the environment's FastMCP instance inside
+FrontierSweEnvironment.__init__:
+- submit_plan(subtasks): Propose a subtask plan (PLANNING → EXECUTING)
+- submit_subtask(subtask_id): Submit current subtask for L1+L2 scoring
+- get_status(): Return episode status snapshot
+- advance(): Freeze subtask score and move to next subtask
 """
 
 from __future__ import annotations
@@ -23,64 +25,31 @@ if TYPE_CHECKING:
     from .frontier_swe_env_environment import FrontierSweEnvironment
 
 
-def create_mcp_server(env: FrontierSweEnvironment) -> FastMCP:
-    """Create a FastMCP server with 4 episode-management tools.
+def register_mcp_tools(mcp: FastMCP, env: "FrontierSweEnvironment") -> None:
+    """Register Frontier-SWE MCP tools on a FastMCP instance."""
 
-    The ``env`` reference lets tool handlers access episode state and
-    trigger scoring.
-    """
-    mcp = FastMCP("frontier-swe-tools")
-
-    @mcp.tool()
-    def submit_plan(subtasks: list[dict]) -> dict:
+    @mcp.tool
+    async def submit_plan(subtasks: list[dict]) -> dict:
         """Propose a subtask plan for the episode.
 
-        Args:
-            subtasks: List of dicts, each with keys "id", "description",
-                and "acceptance_criteria".
-
-        Returns:
-            {"plan_score": float, "feedback": str}
-
-        Rules:
-            - Can only be called once per episode, during the PLANNING phase.
-            - Must have between 1 and max_subtasks subtasks.
-            - Transitions the episode from PLANNING to EXECUTING.
+        Each subtask dict must include "id", "description", and
+        "acceptance_criteria" keys.  Can only be called once per
+        episode, during the PLANNING phase.  Transitions the episode
+        from PLANNING to EXECUTING on success.
         """
-        return env._handle_submit_plan(subtasks)
+        return await env.submit_plan_payload(subtasks)
 
-    @mcp.tool()
-    def submit_subtask(subtask_id: str) -> dict:
-        """Submit current subtask for scoring.
+    @mcp.tool
+    async def submit_subtask(subtask_id: str) -> dict:
+        """Submit the current subtask for L1 (test) + L2 (code-review) scoring."""
+        return await env.submit_subtask_payload(subtask_id)
 
-        Args:
-            subtask_id: The id of the subtask being submitted.
-
-        Returns:
-            {"score": float, "l1_score": float, "l2_score": float,
-             "feedback": str, "attempts_remaining": int}
-        """
-        return env._handle_submit_subtask(subtask_id)
-
-    @mcp.tool()
+    @mcp.tool
     def get_status() -> dict:
-        """Get current episode status.
+        """Get current episode status snapshot."""
+        return env.get_status_payload()
 
-        Returns:
-            {"phase": str, "current_subtask": str | None,
-             "frozen_scores": dict, "time_remaining_s": float,
-             "completion": float, "attempts_used": int,
-             "attempts_remaining": int}
-        """
-        return env._handle_get_status()
-
-    @mcp.tool()
+    @mcp.tool
     def advance() -> dict:
-        """Freeze current subtask score and move to next subtask.
-
-        Returns:
-            {"frozen_score": float, "next_subtask_id": str | None}
-        """
-        return env._handle_advance()
-
-    return mcp
+        """Freeze current subtask score and move to the next subtask."""
+        return env.advance_payload()

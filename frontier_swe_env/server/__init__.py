@@ -7,6 +7,6 @@
 """Frontier Swe Env environment server components."""
 
 from .frontier_swe_env_environment import FrontierSweEnvironment
-from .mcp_tools import create_mcp_server
+from .mcp_tools import register_mcp_tools
 
-__all__ = ["FrontierSweEnvironment", "create_mcp_server"]
+__all__ = ["FrontierSweEnvironment", "register_mcp_tools"]
