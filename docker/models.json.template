@@ -1,0 +1,31 @@
+{
+  "providers": {
+    "openai-compat": {
+      "baseUrl": "${FSWE_AGENT_API_URL}",
+      "api": "openai-completions",
+      "apiKey": "${FSWE_AGENT_API_KEY}",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "qwen-3.5-27b",
+          "name": "Qwen 3.5 27B",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 131072,
+          "maxTokens": 65536
+        },
+        {
+          "id": "glm-5",
+          "name": "GLM 5",
+          "reasoning": false,
+          "input": ["text"],
+          "contextWindow": 131072,
+          "maxTokens": 65536
+        }
+      ]
+    }
+  }
+}
