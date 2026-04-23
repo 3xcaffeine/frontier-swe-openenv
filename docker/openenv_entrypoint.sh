@@ -29,7 +29,7 @@ if [ -n "${FSWE_AGENT_API_URL:-}" ]; then
   }
 }
 MODELS_EOF
-    echo "Generated /root/.pi/agent/models.json for provider=siemens model=${FSWE_AGENT_MODEL:-qwen-3.5-27b}"
+    echo "Generated /root/.pi/agent/models.json for provider=openai-compat model=${FSWE_AGENT_MODEL:-qwen-3.5-27b}"
 fi
 
 # Start the task timer (budget countdown from the base workspace)

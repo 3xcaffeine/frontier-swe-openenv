@@ -64,44 +64,58 @@ Make the binary handle argv[0] dispatch and respond to basic queries.
 
 ## Episode workflow
 
-You MUST follow this workflow — your code is only scored when you use these tools:
+You MUST follow this workflow — your code is only scored when you use these tools.
 
-1. **Plan first.** Call `submit_plan` with a list of subtasks. Each subtask needs:
+**IMPORTANT: You have only 15 minutes. Break work into 3-5 small subtasks that
+you can each code, test, and submit within 2-3 minutes. Do NOT plan huge subtasks
+that try to do everything at once. Submit early and often — even partial progress
+gets scored. A submitted imperfect subtask is worth infinitely more than an
+unsubmitted perfect one.**
+
+1. **Plan first.** Call `submit_plan` with 3-5 small, incremental subtasks.
+   Each subtask needs:
    - `id`: a short identifier (e.g. "S1")
-   - `description`: what you'll implement
+   - `description`: one specific thing you'll implement
    - `acceptance_criteria`: how to know it works
-   Keep to 1-2 subtasks. Example:
+
+   Good plan (small, incremental):
    ```
-   submit_plan({"subtasks": [{"id": "S1", "description": "Implement initdb, pg_ctl, and TCP listener", "acceptance_criteria": "smoke_test.sh passes"}, {"id": "S2", "description": "Implement PG wire protocol and simple SQL via SQLite", "acceptance_criteria": "pg_compat_test.sh tier 1-3 pass"}]})
+   submit_plan({"subtasks": [
+     {"id": "S1", "description": "argv[0] dispatch: initdb creates dir, pg_ctl forks", "acceptance_criteria": "bash build.sh succeeds and initdb -D /tmp/test creates dir"},
+     {"id": "S2", "description": "TCP listener on given port", "acceptance_criteria": "nc -z 127.0.0.1 PORT succeeds"},
+     {"id": "S3", "description": "Wire protocol handshake: StartupMessage, AuthOk, ReadyForQuery", "acceptance_criteria": "psql can connect without hanging"},
+     {"id": "S4", "description": "Simple query: SELECT 1 returns result", "acceptance_criteria": "pg_compat_test.sh tier 1 passes"}
+   ]})
    ```
 
-2. **Code the current subtask.** Use `read`, `edit`, `write`, and `bash` to implement it.
-   Build and test frequently with `bash build.sh && bash /app/smoke_test.sh`.
+   Bad plan (too broad): "Implement everything" in 1-2 subtasks.
 
-3. **Submit for scoring.** When ready, call `submit_subtask` with the current subtask id:
+2. **Code the current subtask.** Keep changes small and focused.
+   Build and test frequently: `bash build.sh && bash /app/smoke_test.sh`
+
+3. **Submit for scoring as soon as basic functionality works.**
+   Call `submit_subtask` with the current subtask id:
    ```
    submit_subtask({"subtask_id": "S1"})
    ```
-   This runs gate checks, compat tests, and a code review.
    The response contains:
    - `score`: your blended score (0.0-1.0)
-   - `feedback`: specific issues found by the code reviewer — **read this carefully**
-   - `gate_score`, `test_score`, `l2_score`: individual component scores
-   - `attempts_remaining`: how many retries you have left
+   - `feedback`: specific issues — **read this carefully**
+   - `attempts_remaining`: retries left
 
    You get **2 attempts per subtask**. If your score is low and you have
-   attempts remaining, use the `feedback` to fix the identified issues,
-   then call `submit_subtask` again. Do NOT call `advance` on a low score
-   when you still have attempts left.
+   attempts remaining, fix the issues from `feedback` and resubmit.
+   Do NOT call `advance` on a low score when you still have attempts left.
 
-4. **Advance.** Call `advance` to freeze your score and move to the next subtask.
-   After the last subtask, this ends the episode and computes your final reward.
-   Only advance when you are satisfied with your score or have no attempts left.
+4. **Advance.** Call `advance` to freeze your score and move on.
+   Only advance when satisfied or out of attempts.
 
-5. **Check progress.** Call `get_status` at any time to see your phase, scores,
-   and remaining time.
+5. **Check progress.** Call `get_status` to see phase, scores, remaining time.
 
 You have 15 minutes. Get as many pg_compat_test.sh tiers passing as possible.
+
+**Remember: submit_subtask early. An imperfect submission that gets feedback
+is better than running out of time with no submissions.**
 """.strip()
 
 
@@ -115,7 +129,7 @@ def pg_training_config() -> TaskConfig:
         gate_script_path="/app/gate_checks.sh",
         visible_test_command="PG_PORT=55432 bash /app/pg_compat_test.sh",
         visible_test_total=72,
-        max_subtasks=2,
+        max_subtasks=5,
         max_attempts_per_subtask=2,
         episode_timeout_s=900,
     )
@@ -143,7 +157,7 @@ def pg_demo_config() -> TaskConfig:
         gate_script_path="/app/gate_checks.sh",
         visible_test_command="PG_PORT=55432 bash /app/pg_compat_test.sh",
         visible_test_total=72,
-        max_subtasks=4,
+        max_subtasks=8,
         max_attempts_per_subtask=3,
         episode_timeout_s=5400,
     )
