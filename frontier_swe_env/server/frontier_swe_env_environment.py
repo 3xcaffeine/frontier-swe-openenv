@@ -101,11 +101,14 @@ class FrontierSweEnvironment(MCPEnvironment):
 
         self.l2_rubric = L2CodeReviewRubric(
             workspace_dir=self.task_config.workspace_dir,
+            task_description=self.task_config.task_description,
+            dimensions=self.task_config.effective_l2_dimensions,
             grader_model=grader_model,
             api_base_url=grader_api_base,
             api_key=grader_api_key,
         )
         self.l3_rubric = L3PlanReviewRubric(
+            task_description=self.task_config.task_description,
             grader_model=grader_model,
             api_base_url=grader_api_base,
             api_key=grader_api_key,
@@ -547,7 +550,7 @@ class FrontierSweEnvironment(MCPEnvironment):
         # L1 scoring (deterministic, local subprocess)
         gate_score = self.gate_rubric.forward(None, None)
         l1_test_score = 0.0
-        if gate_score >= 0.75:  # At least 3/4 gates pass
+        if gate_score >= self.task_config.gate_threshold:
             l1_test_score = self.test_rubric.forward(None, None)
 
         l1_score = (

@@ -19,7 +19,9 @@ _DEFAULT_MAX_RETRIES = 3
 _DEFAULT_RETRY_BACKOFF = [15, 30, 60]
 
 L3_PROMPT_TEMPLATE = """\
-You are evaluating a software engineering plan for a PostgreSQL wire-compatible adapter.
+You are evaluating a software engineering plan.
+
+Task: {task_description}
 
 Task instruction (summary):
 {instruction_summary}
@@ -37,6 +39,16 @@ Score the following dimensions (integers only):
 Respond ONLY with valid JSON:
 {{"coverage": N, "ordering": N, "granularity": N, "ambition": N, "time_awareness": N, "feedback": "..."}}
 """
+
+# L3 dimensions are fixed (task-agnostic plan quality metrics)
+_L3_DIMENSIONS = [
+    {"name": "coverage", "max": 10},
+    {"name": "ordering", "max": 5},
+    {"name": "granularity", "max": 5},
+    {"name": "ambition", "max": 5},
+    {"name": "time_awareness", "max": 5},
+]
+_L3_MAX_SCORE = sum(d["max"] for d in _L3_DIMENSIONS)
 
 
 @dataclass
@@ -64,6 +76,7 @@ class L3PlanReviewRubric(Rubric):
 
     def __init__(
         self,
+        task_description: str = "",
         grader_model: str | None = None,
         api_base_url: str | None = None,
         api_key: str | None = None,
@@ -72,6 +85,7 @@ class L3PlanReviewRubric(Rubric):
         timeout_seconds: int = 120,
     ):
         super().__init__()
+        self.task_description = task_description
         self.grader_model = grader_model
         self.max_retries = max_retries
         self.retry_backoff = retry_backoff or list(_DEFAULT_RETRY_BACKOFF)
@@ -87,6 +101,7 @@ class L3PlanReviewRubric(Rubric):
     def _build_prompt(self, instruction_summary: str, plan: list[dict]) -> str:
         plan_json = json.dumps(plan, indent=2)
         return L3_PROMPT_TEMPLATE.format(
+            task_description=self.task_description or "a software engineering task",
             instruction_summary=instruction_summary,
             plan_json=plan_json,
         )
@@ -115,7 +130,7 @@ class L3PlanReviewRubric(Rubric):
         time_awareness = max(0, min(5, int(data.get("time_awareness", 0))))
         feedback = str(data.get("feedback", ""))
         raw_sum = coverage + ordering + granularity + ambition + time_awareness
-        normalized = raw_sum / 30.0
+        normalized = raw_sum / _L3_MAX_SCORE
 
         return L3GradingResult(
             coverage=coverage,
