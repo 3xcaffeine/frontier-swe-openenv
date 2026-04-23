@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
+import threading
 import time
 from typing import Any, Optional
 from uuid import uuid4
@@ -28,7 +29,6 @@ from openenv.core.env_server.mcp_environment import MCPEnvironment
 from openenv.core.env_server.types import Observation
 from openenv.core.harnesses.adapters.pi import PiHarnessAdapter
 from openenv.core.harnesses.types import HarnessConfig, HarnessEventType
-from openenv.core.utils import run_async_safely
 
 from ..models import EpisodeState, FrontierSweAction, FrontierSweObservation
 from ..rubrics.episode_rubric import EpisodeRubric
@@ -116,6 +116,30 @@ class FrontierSweEnvironment(MCPEnvironment):
         # Timeout watchdog task
         self._watchdog: Optional[asyncio.Task] = None
 
+        # Dedicated event loop for pi subprocess operations.
+        # All async adapter calls (start, send_message, stop) run on this
+        # loop so the subprocess is always on the same loop — avoids the
+        # "Future attached to a different loop" error.
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop_thread: Optional[threading.Thread] = None
+
+    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        """Return the dedicated event loop, starting one if needed."""
+        if self._loop is not None and self._loop.is_running():
+            return self._loop
+        loop = asyncio.new_event_loop()
+        thread = threading.Thread(target=loop.run_forever, daemon=True)
+        thread.start()
+        self._loop = loop
+        self._loop_thread = thread
+        return loop
+
+    def _run(self, coro) -> Any:
+        """Run *coro* on the dedicated loop from the calling (sync) thread."""
+        loop = self._ensure_loop()
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return future.result()
+
     # Gym API
 
     def reset(
@@ -129,7 +153,8 @@ class FrontierSweEnvironment(MCPEnvironment):
         1. Stop any running pi process and cancel watchdog.
         2. Reset workspace to initial git state.
         3. Create PiHarnessAdapter, write .mcp.json, start pi.
-        4. Send scoped instruction as first prompt.
+        4. Return initial observation immediately (instruction is
+           deferred to the first step() call).
         5. Initialise episode state → phase = PLANNING.
         """
         # Cancel previous watchdog
@@ -139,9 +164,9 @@ class FrontierSweEnvironment(MCPEnvironment):
 
         # Stop previous pi process
         if self.adapter is not None:
-            alive = run_async_safely(self.adapter.is_alive())
+            alive = self._run(self.adapter.is_alive())
             if alive:
-                run_async_safely(self.adapter.stop())
+                self._run(self.adapter.stop())
 
         # Reset workspace via git
         self._reset_workspace()
@@ -197,12 +222,15 @@ class FrontierSweEnvironment(MCPEnvironment):
             working_directory=self.task_config.workspace_dir,
             session_timeout_s=self.task_config.episode_timeout_s,
             startup_timeout_s=30.0,
-            model=agent_model,
+            # pi expects "provider/model" format when using custom providers
+            model=f"{agent_provider}/{agent_model}" if agent_provider else agent_model,
             env_vars=pi_env,
         )
         self.adapter = PiHarnessAdapter(
             config=harness_config,
-            mcp_server_url=f"http://localhost:{self.task_config.container_port}/mcp",
+            # Point at /tools/mcp (FastMCP native Streamable HTTP)
+            # NOT /mcp (OpenEnv POST-only JSON-RPC which 405s on GET SSE probe)
+            mcp_server_url=f"http://localhost:{self.task_config.container_port}/tools/mcp",
             provider=agent_provider,
         )
 
@@ -213,20 +241,33 @@ class FrontierSweEnvironment(MCPEnvironment):
             agent_api_url,
         )
 
-        # Inject MCP tools and start pi
-        run_async_safely(self.adapter.inject_tools([]))
-        run_async_safely(self.adapter.start(self.task_config.workspace_dir))
+        # Register this env instance so the shared pi_mcp tools can
+        # delegate to our payload handlers (submit_plan, etc.).
+        from .app import set_active_env
+        set_active_env(self)
 
-        # Send instruction
-        response = run_async_safely(
-            self.adapter.send_message(self.task_config.instruction)
-        )
+        # Inject MCP tools and start pi.
+        # We must pass actual tool definitions so PiHarnessAdapter writes
+        # .mcp.json — otherwise pi won't discover the OpenEnv MCP tools
+        # (submit_plan, submit_subtask, get_status, advance).
+        tools = self._get_mcp_tool_definitions()
+        self._run(self.adapter.inject_tools(tools))
+        self._run(self.adapter.start(self.task_config.workspace_dir))
+
+        # NOTE: We do NOT send the instruction here.  Sending it would
+        # block until pi finishes its full autonomous ReAct loop (minutes),
+        # violating the Gym contract that reset() returns quickly.
+        # Instead, the instruction is prepended to the first step() message
+        # (see _step_impl, step_count == 0 branch).
 
         # Start timeout watchdog
         self._start_watchdog()
 
         return FrontierSweObservation(
-            response=response.response,
+            response=(
+                "Environment ready. You are in the PLANNING phase.\n"
+                "Send your first message to begin working on the task."
+            ),
             phase="PLANNING",
             time_remaining_s=self.task_config.episode_timeout_s,
             done=False,
@@ -239,7 +280,13 @@ class FrontierSweEnvironment(MCPEnvironment):
         timeout_s: Optional[float] = None,
         **kwargs: Any,
     ) -> Observation:
-        """Handle non-MCP actions: send a message to pi, get response."""
+        """Handle non-MCP actions: send a message to pi, get response.
+
+        On the very first step (step_count == 0) the task instruction is
+        prepended to the user message so pi receives the full context.
+        This keeps reset() fast (~3 s) while ensuring the instruction is
+        delivered before the agent begins working.
+        """
         message = action.message
 
         remaining = self._time_remaining()
@@ -254,7 +301,13 @@ class FrontierSweEnvironment(MCPEnvironment):
                 reward=0.0,
             )
 
-        response = run_async_safely(self.adapter.send_message(message))
+        # First step: prepend the task instruction so pi gets full context
+        if self.episode_state.step_count == 0:
+            message = (
+                self.task_config.instruction + "\n\n" + message
+            )
+
+        response = self._run(self.adapter.send_message(message))
         self.episode_state.step_count += 1
 
         # Count tool calls from events
@@ -283,19 +336,27 @@ class FrontierSweEnvironment(MCPEnvironment):
         return self.episode_state
 
     def close(self) -> None:
-        """Clean up pi process, watchdog, and MCP resources."""
+        """Clean up pi process, watchdog, dedicated loop, and MCP resources."""
         if self._watchdog is not None and not self._watchdog.done():
             self._watchdog.cancel()
             self._watchdog = None
 
         if self.adapter is not None:
             try:
-                alive = run_async_safely(self.adapter.is_alive())
+                alive = self._run(self.adapter.is_alive())
                 if alive:
-                    run_async_safely(self.adapter.stop())
+                    self._run(self.adapter.stop())
             except Exception:
                 logger.warning("Error stopping pi adapter during close", exc_info=True)
             self.adapter = None
+
+        # Shut down the dedicated event loop
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            if self._loop_thread is not None:
+                self._loop_thread.join(timeout=5)
+            self._loop = None
+            self._loop_thread = None
 
         super().close()
 
@@ -506,6 +567,21 @@ class FrontierSweEnvironment(MCPEnvironment):
         }
 
     # Private helpers
+
+    def _get_mcp_tool_definitions(self) -> list:
+        """Extract tool definitions from the shared pi_mcp server."""
+        try:
+            from fastmcp import Client
+            from .app import pi_mcp
+
+            async def _list() -> list:
+                async with Client(pi_mcp) as client:
+                    return await client.list_tools()
+
+            return self._run(_list())
+        except Exception:
+            logger.warning("Failed to extract MCP tool definitions", exc_info=True)
+            return []
 
     def _current_subtask_id(self) -> Optional[str]:
         plan = self.episode_state.plan
