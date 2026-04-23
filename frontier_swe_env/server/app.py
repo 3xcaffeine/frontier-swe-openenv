@@ -7,25 +7,12 @@
 """
 FastAPI application for the Frontier Swe Env Environment.
 
-This module creates an HTTP server that exposes the FrontierSweEnvironment
-over HTTP and WebSocket endpoints, compatible with EnvClient.
+Serves two things on the same port:
+1. OpenEnv Gym-style API at /, /reset, /step, /ws, /mcp (POST-only JSON-RPC)
+2. FastMCP native Streamable HTTP at /tools/mcp (POST + GET/SSE)
 
-Endpoints:
-    - POST /reset: Reset the environment
-    - POST /step: Execute an action
-    - GET /state: Get current environment state
-    - GET /schema: Get action/observation schemas
-    - WS /ws: WebSocket endpoint for persistent sessions
-
-Usage:
-    # Development (with auto-reload):
-    uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
-
-    # Production:
-    uvicorn server.app:app --host 0.0.0.0 --port 8000 --workers 4
-
-    # Or run directly:
-    python -m server.app
+Pi-mcp-adapter connects to (2) because it requires Streamable HTTP transport
+(the POST-only /mcp from OpenEnv returns 405 on the GET SSE probe).
 """
 
 try:
@@ -42,34 +29,93 @@ except ImportError:
     from models import FrontierSweAction, FrontierSweObservation
     from server.frontier_swe_env_environment import FrontierSweEnvironment
 
+from fastmcp import FastMCP
 
-# Create the app with web interface and README integration
+# Shared MCP server for pi-mcp-adapter (Streamable HTTP transport)
+# This FastMCP instance is mounted at /tools so pi can connect via
+# Streamable HTTP at http://localhost:8000/tools/mcp.
+#
+# The tools delegate to a mutable _active_env reference that is set
+# by FrontierSweEnvironment on reset().  Since max_concurrent_envs=1,
+# there is exactly one active environment at a time.
+
+_active_env = None  # set by the environment on reset()
+
+pi_mcp = FastMCP("frontier-swe-tools")
+
+
+@pi_mcp.tool
+async def submit_plan(subtasks: list[dict]) -> dict:
+    """Propose a subtask plan for the episode."""
+    if _active_env is None:
+        return {"error": "Environment not initialised. Call reset() first."}
+    return await _active_env.submit_plan_payload(subtasks)
+
+
+@pi_mcp.tool
+async def submit_subtask(subtask_id: str) -> dict:
+    """Submit the current subtask for L1+L2 scoring."""
+    if _active_env is None:
+        return {"error": "Environment not initialised. Call reset() first."}
+    return await _active_env.submit_subtask_payload(subtask_id)
+
+
+@pi_mcp.tool
+def get_status() -> dict:
+    """Get current episode status snapshot."""
+    if _active_env is None:
+        return {"error": "Environment not initialised. Call reset() first."}
+    return _active_env.get_status_payload()
+
+
+@pi_mcp.tool
+def advance() -> dict:
+    """Freeze current subtask score and move to the next subtask."""
+    if _active_env is None:
+        return {"error": "Environment not initialised. Call reset() first."}
+    return _active_env.advance_payload()
+
+
+def set_active_env(env):
+    """Called by FrontierSweEnvironment.reset() to register itself."""
+    global _active_env
+    _active_env = env
+
+
+# OpenEnv app
 app = create_app(
     FrontierSweEnvironment,
     FrontierSweAction,
     FrontierSweObservation,
     env_name="frontier_swe_env",
-    max_concurrent_envs=1,  # increase this number to allow more concurrent WebSocket sessions
+    max_concurrent_envs=1,
 )
+
+# Mount FastMCP's native Streamable HTTP app at /tools
+# This gives us POST + GET (SSE) at /tools/mcp — which pi-mcp-adapter needs.
+# We must wire the lifespan so FastMCP's session manager initialises.
+_mcp_http_app = pi_mcp.http_app()
+
+from contextlib import asynccontextmanager  # noqa: E402
+
+_original_lifespan = app.router.lifespan_context
+
+
+@asynccontextmanager
+async def _combined_lifespan(a):
+    async with _mcp_http_app.router.lifespan_context(_mcp_http_app):
+        if _original_lifespan is not None:
+            async with _original_lifespan(a):
+                yield
+        else:
+            yield
+
+
+app.router.lifespan_context = _combined_lifespan
+app.mount("/tools", _mcp_http_app)
 
 
 def main(host: str = "0.0.0.0", port: int = 8000):
-    """
-    Entry point for direct execution via uv run or python -m.
-
-    This function enables running the server without Docker:
-        uv run --project . server
-        uv run --project . server --port 8001
-        python -m frontier_swe_env.server.app
-
-    Args:
-        host: Host address to bind to (default: "0.0.0.0")
-        port: Port number to listen on (default: 8000)
-
-    For production deployments, consider using uvicorn directly with
-    multiple workers:
-        uvicorn frontier_swe_env.server.app:app --workers 4
-    """
     import uvicorn
 
     uvicorn.run(app, host=host, port=port)

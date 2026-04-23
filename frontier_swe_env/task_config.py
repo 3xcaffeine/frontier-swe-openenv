@@ -45,7 +45,9 @@ PG_TRAINING_INSTRUCTION = """
 
 Your workspace is `/app/postgres-sqlite`. It contains a Zig stub in `src/main.zig`.
 
-Goal: Make the binary handle argv[0] dispatch and respond to basic queries.
+## Goal
+
+Make the binary handle argv[0] dispatch and respond to basic queries.
 
 1. When invoked as `initdb`, create the directory passed via `-D <path>`
 2. When invoked as `pg_ctl start`, fork a background process on the port from `-p`
@@ -53,10 +55,51 @@ Goal: Make the binary handle argv[0] dispatch and respond to basic queries.
 4. Handle the PostgreSQL wire protocol startup: StartupMessage → AuthenticationOk → ReadyForQuery
 5. Handle simple query mode: Query message → parse SQL → execute via SQLite → return RowDescription + DataRow + CommandComplete
 
-Build: `bash build.sh`
-Smoke test: `bash /app/smoke_test.sh`
-Compat test: `PG_PORT=55432 bash /app/pg_compat_test.sh`
-Reference: `w3m /reference/postgresql-docs/html/protocol-flow.html`
+## Useful commands
+
+- Build: `bash build.sh`
+- Smoke test: `bash /app/smoke_test.sh`
+- Compat test: `PG_PORT=55432 bash /app/pg_compat_test.sh`
+- PG wire protocol docs: `w3m /reference/postgresql-docs/html/protocol-flow.html`
+
+## Episode workflow
+
+You MUST follow this workflow — your code is only scored when you use these tools:
+
+1. **Plan first.** Call `submit_plan` with a list of subtasks. Each subtask needs:
+   - `id`: a short identifier (e.g. "S1")
+   - `description`: what you'll implement
+   - `acceptance_criteria`: how to know it works
+   Keep to 1-2 subtasks. Example:
+   ```
+   submit_plan({"subtasks": [{"id": "S1", "description": "Implement initdb, pg_ctl, and TCP listener", "acceptance_criteria": "smoke_test.sh passes"}, {"id": "S2", "description": "Implement PG wire protocol and simple SQL via SQLite", "acceptance_criteria": "pg_compat_test.sh tier 1-3 pass"}]})
+   ```
+
+2. **Code the current subtask.** Use `read`, `edit`, `write`, and `bash` to implement it.
+   Build and test frequently with `bash build.sh && bash /app/smoke_test.sh`.
+
+3. **Submit for scoring.** When ready, call `submit_subtask` with the current subtask id:
+   ```
+   submit_subtask({"subtask_id": "S1"})
+   ```
+   This runs gate checks, compat tests, and a code review.
+   The response contains:
+   - `score`: your blended score (0.0-1.0)
+   - `feedback`: specific issues found by the code reviewer — **read this carefully**
+   - `gate_score`, `test_score`, `l2_score`: individual component scores
+   - `attempts_remaining`: how many retries you have left
+
+   You get **2 attempts per subtask**. If your score is low and you have
+   attempts remaining, use the `feedback` to fix the identified issues,
+   then call `submit_subtask` again. Do NOT call `advance` on a low score
+   when you still have attempts left.
+
+4. **Advance.** Call `advance` to freeze your score and move to the next subtask.
+   After the last subtask, this ends the episode and computes your final reward.
+   Only advance when you are satisfied with your score or have no attempts left.
+
+5. **Check progress.** Call `get_status` at any time to see your phase, scores,
+   and remaining time.
 
 You have 15 minutes. Get as many pg_compat_test.sh tiers passing as possible.
 """.strip()
