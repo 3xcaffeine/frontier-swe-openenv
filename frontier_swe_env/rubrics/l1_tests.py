@@ -32,7 +32,7 @@ class TestOutputRubric(Rubric):
         test_command: str = "bash /app/test.sh",
         output_pattern: str = r"Total:\s*(\d+)/(\d+)\s*passed",
         score_mode: str = "ratio",
-        port: int = 55432,
+        port: int = 0,
         host: str = "127.0.0.1",
         timeout_s: int = 300,
     ):
