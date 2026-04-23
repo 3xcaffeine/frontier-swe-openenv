@@ -37,7 +37,7 @@ from ..rubrics.gate_checks import GateCheckRubric
 from ..rubrics.l1_tests import TestOutputRubric
 from ..rubrics.l2_code_review import L2CodeReviewRubric
 from ..rubrics.l3_plan_review import L3PlanReviewRubric
-from ..task_config import TaskConfig, pg_training_config
+from ..task_config import TaskConfig
 from .mcp_tools import register_mcp_tools
 
 logger = logging.getLogger(__name__)
@@ -55,8 +55,14 @@ class FrontierSweEnvironment(MCPEnvironment):
     def __init__(
         self,
         task_config: Optional[TaskConfig] = None,
+        task_name: str = "pg",
+        mode: str = "training",
     ) -> None:
-        self.task_config = task_config or pg_training_config()
+        if task_config is not None:
+            self.task_config = task_config
+        else:
+            from ..tasks import get_task_config
+            self.task_config = get_task_config(task_name, mode)
         self.episode_state = EpisodeState()
 
         # Build MCP server and register tools
