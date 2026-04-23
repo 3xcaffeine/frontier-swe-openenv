@@ -17,6 +17,7 @@ class TaskConfig(BaseModel):
     max_subtasks: int
     max_attempts_per_subtask: int
     episode_timeout_s: float
+    per_turn_timeout_s: float = 180.0
     # Scoring weights
     gate_weight: float = 0.30
     l1_weight: float = 0.70
@@ -132,6 +133,7 @@ def pg_training_config() -> TaskConfig:
         max_subtasks=5,
         max_attempts_per_subtask=2,
         episode_timeout_s=900,
+        per_turn_timeout_s=180,
     )
 
 
@@ -160,4 +162,5 @@ def pg_demo_config() -> TaskConfig:
         max_subtasks=8,
         max_attempts_per_subtask=3,
         episode_timeout_s=5400,
+        per_turn_timeout_s=600,
     )

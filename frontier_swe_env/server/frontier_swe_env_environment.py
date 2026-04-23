@@ -221,7 +221,7 @@ class FrontierSweEnvironment(MCPEnvironment):
             name="pi",
             command=["pi"],
             working_directory=self.task_config.workspace_dir,
-            session_timeout_s=self.task_config.episode_timeout_s,
+            session_timeout_s=self.task_config.per_turn_timeout_s,
             startup_timeout_s=30.0,
             # pi expects "provider/model" format when using custom providers
             model=f"{agent_provider}/{agent_model}" if agent_provider else agent_model,
@@ -364,11 +364,66 @@ class FrontierSweEnvironment(MCPEnvironment):
                         str(result_data)[:500],
                     )
 
+        # --- Option A: Auto-submit on turn timeout ---
+        # If the turn timed out while in EXECUTING phase and the current
+        # subtask hasn't exhausted its attempts, auto-submit to get a
+        # score signal.
+        timed_out = any(
+            e.type == HarnessEventType.ERROR
+            and "timeout" in str(e.data.get("message", "")).lower()
+            for e in response.events
+        )
+        auto_submit_result = None
+        response_text = response.response or ""
+
+        if timed_out and self.episode_state.phase == "EXECUTING":
+            current_id = self._current_subtask_id()
+            attempts_used = self.episode_state.attempts.get(current_id, 0) if current_id else 999
+            max_attempts = self.episode_state.max_attempts_per_subtask
+            if current_id and attempts_used < max_attempts:
+                logger.info(
+                    "Auto-submitting subtask %s on turn timeout", current_id
+                )
+                try:
+                    auto_submit_result = self._run(
+                        self.submit_subtask_payload(current_id)
+                    )
+                    logger.info(
+                        "Auto-submit result for %s: score=%.4f best=%.4f",
+                        current_id,
+                        auto_submit_result.get("score", 0),
+                        auto_submit_result.get("best_score", 0),
+                    )
+                    feedback_str = json.dumps(auto_submit_result)
+                    response_text += (
+                        f"\n\n[AUTO-SUBMIT on turn timeout] "
+                        f"Subtask {current_id} scored: {feedback_str}"
+                    )
+                except Exception:
+                    logger.exception(
+                        "Auto-submit failed for subtask %s", current_id
+                    )
+
+            # Auto-advance if attempts are now exhausted for the current subtask
+            current_id = self._current_subtask_id()
+            if current_id:
+                attempts_now = self.episode_state.attempts.get(current_id, 0)
+                if attempts_now >= max_attempts and self.episode_state.phase == "EXECUTING":
+                    logger.info(
+                        "Auto-advancing past subtask %s (attempts exhausted)",
+                        current_id,
+                    )
+                    advance_result = self.advance_payload()
+                    response_text += (
+                        f"\n[AUTO-ADVANCE] Subtask {current_id} attempts exhausted. "
+                        f"{json.dumps(advance_result)}"
+                    )
+
         done = response.done or self.episode_state.phase == "DONE"
         reward = self.episode_state.episode_reward if done else 0.0
 
         return FrontierSweObservation(
-            response=response.response,
+            response=response_text,
             phase=self.episode_state.phase,
             current_subtask=self._current_subtask_id(),
             frozen_scores=dict(self.episode_state.frozen_scores),
@@ -376,6 +431,7 @@ class FrontierSweEnvironment(MCPEnvironment):
             plan_score=self.episode_state.plan_score
             if self.episode_state.plan
             else None,
+            subtask_feedback=auto_submit_result,
             done=done,
             reward=reward or 0.0,
         )
@@ -663,8 +719,37 @@ class FrontierSweEnvironment(MCPEnvironment):
             logger.warning("Failed to reset workspace at %s", ws)
 
     def _timeout_observation(self) -> FrontierSweObservation:
-        """Handle episode timeout — freeze everything, compute reward."""
+        """Handle episode timeout — auto-submit current subtask, freeze, compute reward."""
         if self.episode_state.phase != "DONE":
+            # Option B: Auto-submit on episode timeout before computing reward
+            if self.episode_state.phase == "EXECUTING":
+                current_id = self._current_subtask_id()
+                attempts_used = (
+                    self.episode_state.attempts.get(current_id, 0)
+                    if current_id
+                    else 999
+                )
+                max_attempts = self.episode_state.max_attempts_per_subtask
+                if current_id and attempts_used < max_attempts:
+                    logger.info(
+                        "Episode timeout — auto-submitting subtask %s",
+                        current_id,
+                    )
+                    try:
+                        result = self._run(
+                            self.submit_subtask_payload(current_id)
+                        )
+                        logger.info(
+                            "Episode timeout auto-submit %s: score=%.4f",
+                            current_id,
+                            result.get("score", 0),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Episode timeout auto-submit failed for %s",
+                            current_id,
+                        )
+
             self.episode_state.phase = "DONE"
             self.episode_state.episode_reward = self.episode_rubric.compute(
                 self.episode_state

@@ -120,14 +120,61 @@ async def run_episode(
                 turn, obs.phase, elapsed, obs.time_remaining_s,
             )
 
-            # First turn: send a kickoff message; subsequent turns: continue
+            # First turn: send a kickoff message; subsequent turns: smart continue
             if turn == 1:
                 msg = (
                     "Please begin. Read the workspace, plan your approach, "
                     "then call submit_plan with your subtasks."
                 )
             else:
-                msg = "continue"
+                # Option C: Smart continue messages that nudge the agent
+                # toward using the episode protocol.
+                current_subtask = obs.current_subtask or "?"
+                remaining = obs.time_remaining_s
+                if obs.phase == "PLANNING":
+                    msg = (
+                        f"TURN TIMEOUT. You have {remaining:.0f}s remaining. "
+                        f"You MUST call submit_plan NOW with your subtasks "
+                        f"to enter the EXECUTING phase."
+                    )
+                elif obs.phase == "EXECUTING":
+                    # Check if auto-submit feedback was provided
+                    if obs.subtask_feedback and "score" in obs.subtask_feedback:
+                        score = obs.subtask_feedback.get("score", 0)
+                        best = obs.subtask_feedback.get("best_score", 0)
+                        attempts_left = obs.subtask_feedback.get(
+                            "attempts_remaining", 0
+                        )
+                        feedback = obs.subtask_feedback.get("feedback", "")
+                        if attempts_left > 0 and score < 0.7:
+                            msg = (
+                                f"TURN TIMEOUT. Auto-submitted subtask "
+                                f"{current_subtask}: score={score:.2f} "
+                                f"(best={best:.2f}). "
+                                f"Feedback: {feedback[:300]}\n\n"
+                                f"You have {attempts_left} attempt(s) left "
+                                f"and {remaining:.0f}s remaining. "
+                                f"Fix the issues and call "
+                                f"submit_subtask('{current_subtask}') again, "
+                                f"then advance."
+                            )
+                        else:
+                            msg = (
+                                f"TURN TIMEOUT. Auto-submitted subtask "
+                                f"{current_subtask}: score={score:.2f} "
+                                f"(best={best:.2f}). "
+                                f"Call advance() to move to the next subtask. "
+                                f"You have {remaining:.0f}s remaining."
+                            )
+                    else:
+                        msg = (
+                            f"TURN TIMEOUT. You have {remaining:.0f}s remaining. "
+                            f"You are working on subtask {current_subtask}. "
+                            f"Call submit_subtask('{current_subtask}') NOW "
+                            f"to get your score, then call advance() to proceed."
+                        )
+                else:
+                    msg = "continue"
 
             result = await client.step(FrontierSweAction(message=msg))
             obs = result.observation
@@ -140,6 +187,14 @@ async def run_episode(
 
             if obs.frozen_scores:
                 logger.info("Scores: %s", obs.frozen_scores)
+
+            if obs.subtask_feedback:
+                logger.info(
+                    "Auto-submit feedback: score=%.4f best=%.4f attempts_left=%d",
+                    obs.subtask_feedback.get("score", 0),
+                    obs.subtask_feedback.get("best_score", 0),
+                    obs.subtask_feedback.get("attempts_remaining", 0),
+                )
 
             if obs.episode_reward is not None:
                 logger.info("Episode reward: %s", obs.episode_reward)
