@@ -10,5 +10,12 @@ dependencies = [
     "openenv-core",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "requests",
+]
+
 [tool.uv.sources]
 openenv-core = { git = "https://github.com/rycerzes/OpenEnv", rev = "ff48ff3097ed38f616d380ba49c0eb4a198d603f" }

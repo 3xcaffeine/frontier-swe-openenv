@@ -222,3 +222,6 @@ frontier-swe/
 pi-mono/
 
 docs/
+tests/
+
+*.json
