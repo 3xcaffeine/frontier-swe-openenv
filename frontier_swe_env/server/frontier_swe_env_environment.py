@@ -34,7 +34,7 @@ from openenv.core.harnesses.types import HarnessConfig, HarnessEventType
 from ..models import EpisodeState, FrontierSweAction, FrontierSweObservation
 from ..rubrics.episode_rubric import EpisodeRubric
 from ..rubrics.gate_checks import GateCheckRubric
-from ..rubrics.l1_tests import PGCompatTestRubric
+from ..rubrics.l1_tests import TestOutputRubric
 from ..rubrics.l2_code_review import L2CodeReviewRubric
 from ..rubrics.l3_plan_review import L3PlanReviewRubric
 from ..task_config import TaskConfig, pg_training_config
@@ -66,8 +66,10 @@ class FrontierSweEnvironment(MCPEnvironment):
 
         # Rubric components
         self.gate_rubric = GateCheckRubric(self.task_config.gate_script_path)
-        self.test_rubric = PGCompatTestRubric(
+        self.test_rubric = TestOutputRubric(
             test_command=self.task_config.visible_test_command,
+            output_pattern=self.task_config.l1_output_pattern,
+            score_mode=self.task_config.l1_score_mode,
         )
 
         # Resolve grader LLM config.
