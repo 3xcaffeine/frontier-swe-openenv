@@ -40,8 +40,13 @@ Score the following dimensions (integers only):
 - robustness (0-5): Does it handle edge cases?
 - forward_compatibility (0-5): Will this work with future subtasks?
 
+Also provide:
+- "issues": a list of 1-3 specific, actionable problems the agent should fix
+  (e.g. "AuthenticationOk message not sent after StartupMessage")
+- "feedback": a one-sentence summary of overall quality
+
 Respond ONLY with valid JSON:
-{{"completeness": N, "correctness": N, "robustness": N, "forward_compatibility": N, "feedback": "..."}}
+{{"completeness": N, "correctness": N, "robustness": N, "forward_compatibility": N, "issues": ["...", "..."], "feedback": "..."}}
 """
 
 
@@ -70,7 +75,7 @@ class L2CodeReviewRubric(Rubric):
     def __init__(
         self,
         workspace_dir: str = "/app/postgres-sqlite",
-        grader_model: str = "gemini-2.0-flash",
+        grader_model: str | None = None,
         api_base_url: str | None = None,
         api_key: str | None = None,
         max_retries: int = _DEFAULT_MAX_RETRIES,
@@ -130,8 +135,9 @@ class L2CodeReviewRubric(Rubric):
 
     def _parse_response(self, text: str) -> L2GradingResult:
         """Parse JSON scores from the LLM response."""
-        # Try to find a JSON block in the response
-        json_match = re.search(r"\{[^}]+\}", text, re.DOTALL)
+        # Try to find a JSON block in the response.
+        # Use a greedy match so nested arrays ("issues": [...]) are captured.
+        json_match = re.search(r"\{.+\}", text, re.DOTALL)
         if not json_match:
             return L2GradingResult(feedback="Failed to parse JSON from response.")
 
@@ -145,6 +151,14 @@ class L2CodeReviewRubric(Rubric):
         robustness = max(0, min(5, int(data.get("robustness", 0))))
         forward_compat = max(0, min(5, int(data.get("forward_compatibility", 0))))
         feedback = str(data.get("feedback", ""))
+
+        # Fold actionable issues into the feedback string so the agent
+        # sees them directly in the MCP tool result.
+        issues = data.get("issues", [])
+        if isinstance(issues, list) and issues:
+            issue_lines = "\n".join(f"  - {issue}" for issue in issues)
+            feedback = f"{feedback}\nIssues to fix:\n{issue_lines}"
+
         raw_sum = completeness + correctness + robustness + forward_compat
         normalized = raw_sum / 30.0
 

@@ -64,7 +64,7 @@ class L3PlanReviewRubric(Rubric):
 
     def __init__(
         self,
-        grader_model: str = "gemini-2.0-flash",
+        grader_model: str | None = None,
         api_base_url: str | None = None,
         api_key: str | None = None,
         max_retries: int = _DEFAULT_MAX_RETRIES,
