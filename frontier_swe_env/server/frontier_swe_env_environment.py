@@ -17,6 +17,7 @@ Runs INSIDE the custom Docker container alongside pi.  Manages:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import subprocess
 import threading
@@ -310,10 +311,58 @@ class FrontierSweEnvironment(MCPEnvironment):
         response = self._run(self.adapter.send_message(message))
         self.episode_state.step_count += 1
 
-        # Count tool calls from events
+        # Log detailed event summary for observability
+        tool_calls = []
+        tool_results = []
+        errors = []
         for event in response.events:
             if event.type == HarnessEventType.TOOL_CALL:
                 self.episode_state.tool_call_count += 1
+                name = event.data.get("tool_name") or "?"
+                phase = event.data.get("phase", "")
+                if phase in ("end", "execution_start"):
+                    tool_calls.append(name)
+            elif event.type == HarnessEventType.TOOL_RESULT:
+                name = event.data.get("tool_name") or "?"
+                is_err = event.data.get("is_error", False)
+                tool_results.append((name, is_err))
+            elif event.type == HarnessEventType.ERROR:
+                errors.append(event.data.get("message", str(event.data)))
+
+        # Summarise tool usage
+        if tool_calls:
+            from collections import Counter
+            counts = Counter(tool_calls)
+            summary = ", ".join(f"{n}×{c}" for n, c in counts.most_common())
+            logger.info(
+                "Turn %d tool calls (%d total): %s",
+                self.episode_state.step_count, len(tool_calls), summary,
+            )
+        if errors:
+            for err in errors:
+                logger.warning("Turn %d error: %s", self.episode_state.step_count, err[:200])
+
+        # Log MCP tool interactions specifically (submit_plan, submit_subtask, etc.)
+        for event in response.events:
+            if event.type == HarnessEventType.TOOL_CALL and event.data.get("phase") == "end":
+                name = event.data.get("tool_name", "")
+                if name == "mcp":
+                    args = event.data.get("arguments", {})
+                    logger.info(
+                        "Turn %d MCP tool call: %s",
+                        self.episode_state.step_count,
+                        json.dumps(args)[:500] if args else "(no args)",
+                    )
+            elif event.type == HarnessEventType.TOOL_RESULT:
+                name = event.data.get("tool_name", "")
+                if name == "mcp":
+                    result_data = event.data.get("result", "")
+                    is_err = event.data.get("is_error", False)
+                    logger.info(
+                        "Turn %d MCP tool result (error=%s): %s",
+                        self.episode_state.step_count, is_err,
+                        str(result_data)[:500],
+                    )
 
         done = response.done or self.episode_state.phase == "DONE"
         reward = self.episode_state.episode_reward if done else 0.0
