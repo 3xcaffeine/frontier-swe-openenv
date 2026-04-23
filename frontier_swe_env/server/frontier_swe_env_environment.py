@@ -685,7 +685,14 @@ class FrontierSweEnvironment(MCPEnvironment):
     # Private helpers
 
     def _get_mcp_tool_definitions(self) -> list:
-        """Extract tool definitions from the shared pi_mcp server."""
+        """Extract tool definitions from the shared pi_mcp server.
+
+        We list tools from the module-level ``pi_mcp`` in ``app.py``
+        (the FastMCP instance actually served at ``/tools/mcp``),
+        because that is where pi-mcp-adapter connects.  The per-env
+        FastMCP created in ``__init__`` has the same tools but is
+        only used by the OpenEnv ``/mcp`` JSON-RPC endpoint.
+        """
         try:
             from fastmcp import Client
             from .app import pi_mcp
