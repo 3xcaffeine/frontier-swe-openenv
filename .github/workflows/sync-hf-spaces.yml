@@ -4,24 +4,15 @@ on:
   workflow_run:
     workflows: [GHCR — Build & Push Images]
     types: [completed]
-    branches: [main, feat/issue-6-hf-spaces-ghcr-deployment]
+    branches: [main]
   workflow_dispatch:
-  # Temporary during branch-level validation: fire on every push to the
-  # feature branch that touches this workflow or the Space assembly code.
-  # Reverted before PR.
-  push:
-    branches: [feat/issue-6-hf-spaces-ghcr-deployment]
-    paths:
-      - ".github/workflows/sync-hf-spaces.yml"
-      - "spaces/**"
-      - "scripts/prepare_hf_space.py"
 
 permissions:
   contents: read
 
 jobs:
   sync:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -47,8 +38,16 @@ jobs:
           python3 scripts/prepare_hf_space.py \
             --task ${{ matrix.task }} \
             --out /tmp/space-${{ matrix.task }}
-          echo "--- Space Dockerfile ---"
-          cat /tmp/space-${{ matrix.task }}/Dockerfile
+
+      - name: Pin Space Dockerfile to GHCR SHA
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          TASK: ${{ matrix.task }}
+        run: |
+          short=$(echo "$HEAD_SHA" | cut -c1-7)
+          sed -i -E "s|(ghcr.io/[^:]+):latest|\1:sha-${short}|" /tmp/space-${TASK}/Dockerfile
+          echo "--- pinned Dockerfile ---"
+          cat /tmp/space-${TASK}/Dockerfile
 
       - name: Ensure Space exists and apply secrets
         env:

@@ -2,7 +2,7 @@ name: GHCR — Build & Push Images
 
 on:
   push:
-    branches: [main, feat/issue-6-hf-spaces-ghcr-deployment]
+    branches: [main]
     paths-ignore:
       - "spaces/**"
       - "scripts/prepare_hf_space.py"
