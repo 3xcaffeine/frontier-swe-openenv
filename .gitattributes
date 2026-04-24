@@ -1,0 +1,2 @@
+tasks/notebook-compression/tests/hidden_test_set_bundle.zip filter=lfs diff=lfs merge=lfs -text
+tasks/postgres-sqlite-wire-adapter/tests/hidden/postgresql-18-tests.tar.gz filter=lfs diff=lfs merge=lfs -text

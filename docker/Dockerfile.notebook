@@ -11,7 +11,8 @@
 # Run:
 #   podman run -p 8000:8000 frontier-swe-notebook:latest
 
-FROM openenv-base:latest
+ARG BASE_IMAGE=openenv-base:latest
+FROM ${BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DATA_ROOT=/mnt/notebook-data

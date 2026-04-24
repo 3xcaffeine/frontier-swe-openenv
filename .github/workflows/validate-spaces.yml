@@ -1,0 +1,43 @@
+name: HF Spaces — Validate
+
+on:
+  workflow_run:
+    workflows: [HF Spaces — Sync]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [notebook, postgres]
+    steps:
+      - name: Poll Space /health
+        env:
+          HF_OWNER: ${{ vars.HF_OWNER }}
+          TASK: ${{ matrix.task }}
+        run: |
+          url="https://${HF_OWNER}-frontier-swe-${TASK}.hf.space/health"
+          delay=10
+          max_total=600
+          elapsed=0
+          while [ "$elapsed" -lt "$max_total" ]; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$url" || echo 000)
+            echo "probe ${url} -> ${code} (elapsed ${elapsed}s)"
+            if [ "$code" = "200" ]; then
+              exit 0
+            fi
+            sleep "$delay"
+            elapsed=$((elapsed + delay))
+            delay=$((delay * 2))
+            [ "$delay" -gt 60 ] && delay=60
+          done
+          echo "Space ${url} did not report healthy within ${max_total}s"
+          exit 1
