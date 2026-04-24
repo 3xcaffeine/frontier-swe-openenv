@@ -226,3 +226,5 @@ tests/
 
 *.json
 *.txt
+
+trajectories*/

@@ -110,8 +110,8 @@ async def run_episode(
             turn += 1
             elapsed = time.time() - t0
 
-            # Check episode timeout (server-side is 900s)
-            if elapsed > 890:
+            # Check episode timeout (server-side is 2700s for training)
+            if elapsed > 2690:
                 logger.info("Approaching episode timeout, stopping.")
                 break
 
