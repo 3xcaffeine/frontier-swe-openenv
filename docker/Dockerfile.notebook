@@ -85,6 +85,11 @@ RUN cd /app \
     && git config --global user.name "agent" \
     && git init && git add -A && git commit -m "initial stub"
 
+# Patch PiHarnessAdapter: remove --no-session so pi persists session .jsonl files.
+# Without this, pi runs in-memory-only mode and no trajectory data is saved.
+RUN find /opt/openenv-venv -path '*/harnesses/adapters/pi.py' -exec \
+    sed -i '/if "--no-session" not in cmd:/,/cmd.append("--no-session")/d' {} \;
+
 # Re-copy entrypoint (matches Dockerfile.pg pattern for explicitness;
 # also picks up any local changes since base was built)
 COPY docker/openenv_entrypoint.sh /app/openenv_entrypoint.sh

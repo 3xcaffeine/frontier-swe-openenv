@@ -233,3 +233,4 @@ pi-mono/
 !tasks/**/*.txt
 !notes/**/*.json
 !notes/**/*.txt
+notes/
