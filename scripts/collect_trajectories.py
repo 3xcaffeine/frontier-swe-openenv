@@ -35,8 +35,8 @@ _project_root = Path(__file__).resolve().parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from frontier_swe_env.client import FrontierSweEnv
-from frontier_swe_env.models import FrontierSweAction
+from frontier_swe_env.client import FrontierSweEnv  # noqa: E402
+from frontier_swe_env.models import FrontierSweAction  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,9 +49,8 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("websockets").setLevel(logging.WARNING)
 
-# ---------------------------------------------------------------------------
+
 # Constants
-# ---------------------------------------------------------------------------
 
 DOCKER_IMAGE = "frontier-swe-pg:latest"
 CONTAINER_PREFIX = "fswe-worker"
@@ -65,9 +64,49 @@ HEALTH_CHECK_RETRIES = 30
 HEALTH_CHECK_INTERVAL = 2
 
 
-# ---------------------------------------------------------------------------
+# Offline reward computation
+
+
+def _compute_reward_offline(result: dict) -> float:
+    """Compute episode reward from result.json data.
+
+    Same formula as EpisodeRubric.compute(), applied to the client-side
+    state snapshot when the server didn't transition to DONE.
+    """
+    plan = result.get("plan")
+    plan_score = result.get("plan_score", 0.0) or 0.0
+    frozen_scores = result.get("frozen_scores", {}) or {}
+    tool_call_count = result.get("tool_call_count", 0) or 0
+
+    plan_count = max(len(plan), 1) if plan else 1
+
+    # Weights (match EpisodeRubric / pg_training_config)
+    plan_weight = 0.25
+    subtask_weight = 0.60
+    completion_weight = 0.10
+    tool_weight = 0.05
+
+    scores = list(frozen_scores.values())
+    while len(scores) < plan_count:
+        scores.append(0.0)
+    subtask_mean = sum(scores) / max(len(scores), 1)
+
+    scored_count = len(frozen_scores)
+    completion = min(scored_count / plan_count, 1.0)
+
+    tool_density = min(tool_call_count / (5 * plan_count), 1.0)
+
+    reward = (
+        plan_weight * plan_score
+        + subtask_weight * subtask_mean
+        + completion_weight * completion
+        + tool_weight * tool_density
+    )
+    return max(0.0, min(1.0, reward))
+
+
 # Container management
-# ---------------------------------------------------------------------------
+
 
 def container_name(worker_id: int) -> str:
     return f"{CONTAINER_PREFIX}-{worker_id}"
@@ -81,14 +120,20 @@ def start_container(worker_id: int) -> bool:
     # Remove any existing container with this name
     subprocess.run(
         ["docker", "rm", "-f", name],
-        capture_output=True, timeout=10,
+        capture_output=True,
+        timeout=10,
     )
 
     cmd = [
-        "docker", "run", "-d",
-        "--name", name,
-        "-p", f"{port}:8000",
-        "--env-file", ENV_FILE,
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        name,
+        "-p",
+        f"{port}:8000",
+        "--env-file",
+        ENV_FILE,
         DOCKER_IMAGE,
     ]
 
@@ -119,8 +164,11 @@ def wait_for_healthy(worker_id: int) -> bool:
             pass
         time.sleep(HEALTH_CHECK_INTERVAL)
 
-    logger.error("Worker %d failed health check after %d attempts",
-                 worker_id, HEALTH_CHECK_RETRIES)
+    logger.error(
+        "Worker %d failed health check after %d attempts",
+        worker_id,
+        HEALTH_CHECK_RETRIES,
+    )
     return False
 
 
@@ -150,9 +198,8 @@ def reset_container(worker_id: int) -> bool:
     return wait_for_healthy(worker_id)
 
 
-# ---------------------------------------------------------------------------
 # Artifact extraction
-# ---------------------------------------------------------------------------
+
 
 def extract_artifacts(worker_id: int, episode_dir: Path) -> dict:
     """Extract logs and session JSONL from a worker container."""
@@ -163,7 +210,9 @@ def extract_artifacts(worker_id: int, episode_dir: Path) -> dict:
     try:
         result = subprocess.run(
             ["docker", "logs", name],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         log_path = episode_dir / "container_logs.txt"
         log_path.write_text(result.stdout + result.stderr)
@@ -175,17 +224,33 @@ def extract_artifacts(worker_id: int, episode_dir: Path) -> dict:
     # Pi session JSONL
     try:
         result = subprocess.run(
-            ["docker", "exec", name, "bash", "-c",
-             "find /root/.pi/agent/sessions -name '*.jsonl' -type f 2>/dev/null | head -1"],
-            capture_output=True, text=True, timeout=5,
+            [
+                "docker",
+                "exec",
+                name,
+                "bash",
+                "-c",
+                "find /root/.pi/agent/sessions -name '*.jsonl' -type f 2>/dev/null | head -1",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         session_file = result.stdout.strip()
 
         if not session_file:
             result = subprocess.run(
-                ["docker", "exec", name, "bash", "-c",
-                 "find /root/.pi -name '*.jsonl' -type f 2>/dev/null | head -1"],
-                capture_output=True, text=True, timeout=5,
+                [
+                    "docker",
+                    "exec",
+                    name,
+                    "bash",
+                    "-c",
+                    "find /root/.pi -name '*.jsonl' -type f 2>/dev/null | head -1",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             session_file = result.stdout.strip()
 
@@ -193,7 +258,8 @@ def extract_artifacts(worker_id: int, episode_dir: Path) -> dict:
             dest = episode_dir / "pi_session.jsonl"
             result = subprocess.run(
                 ["docker", "cp", f"{name}:{session_file}", str(dest)],
-                capture_output=True, timeout=30,
+                capture_output=True,
+                timeout=30,
             )
             if result.returncode == 0 and dest.exists():
                 size_kb = dest.stat().st_size / 1024
@@ -201,8 +267,10 @@ def extract_artifacts(worker_id: int, episode_dir: Path) -> dict:
                 artifacts["pi_session"] = True
                 logger.info("  Pi session: %.1f KB, %d lines", size_kb, lines)
             else:
-                logger.warning("  docker cp failed: %s",
-                              result.stderr[:200] if result.stderr else "unknown")
+                logger.warning(
+                    "  docker cp failed: %s",
+                    result.stderr[:200] if result.stderr else "unknown",
+                )
         else:
             logger.warning("  No pi_session.jsonl found in container!")
     except Exception as e:
@@ -211,9 +279,8 @@ def extract_artifacts(worker_id: int, episode_dir: Path) -> dict:
     return artifacts
 
 
-# ---------------------------------------------------------------------------
 # Single episode runner (adapted from run_baseline.py)
-# ---------------------------------------------------------------------------
+
 
 async def run_single_episode(
     worker_id: int,
@@ -225,7 +292,9 @@ async def run_single_episode(
     port = BASE_PORT + worker_id
     base_url = f"http://localhost:{port}"
 
-    logger.info("Episode %d starting on worker %d (port %d)", episode_id, worker_id, port)
+    logger.info(
+        "Episode %d starting on worker %d (port %d)", episode_id, worker_id, port
+    )
 
     client = FrontierSweEnv(
         base_url=base_url,
@@ -269,7 +338,9 @@ async def run_single_episode(
                     if obs.subtask_feedback and "score" in obs.subtask_feedback:
                         score = obs.subtask_feedback.get("score", 0)
                         best = obs.subtask_feedback.get("best_score", 0)
-                        attempts_left = obs.subtask_feedback.get("attempts_remaining", 0)
+                        attempts_left = obs.subtask_feedback.get(
+                            "attempts_remaining", 0
+                        )
                         feedback = obs.subtask_feedback.get("feedback", "")
                         if attempts_left > 0 and score < 0.7:
                             msg = (
@@ -305,10 +376,18 @@ async def run_single_episode(
             obs = result.observation
 
             # Brief per-turn log
-            scores_str = " ".join(f"{k}={v:.2f}" for k, v in obs.frozen_scores.items()) if obs.frozen_scores else "none"
+            scores_str = (
+                " ".join(f"{k}={v:.2f}" for k, v in obs.frozen_scores.items())
+                if obs.frozen_scores
+                else "none"
+            )
             logger.info(
                 "  Ep %d turn %d: phase=%s scores=[%s] remaining=%.0fs",
-                episode_id, turn, obs.phase, scores_str, obs.time_remaining_s,
+                episode_id,
+                turn,
+                obs.phase,
+                scores_str,
+                obs.time_remaining_s,
             )
 
             if obs.phase == "DONE":
@@ -332,6 +411,17 @@ async def run_single_episode(
             "plan": getattr(state, "plan", None),
             "done": result.done,
         }
+
+        # Backfill reward if the server didn't compute one (episode didn't
+        # reach DONE because the client hit max_turns or timeout first).
+        if episode_result["episode_reward"] is None:
+            episode_result["episode_reward"] = _compute_reward_offline(episode_result)
+            episode_result["_reward_backfilled"] = True
+            logger.info(
+                "  Ep %d: backfilled reward=%.4f",
+                episode_id,
+                episode_result["episode_reward"],
+            )
 
     except Exception as e:
         elapsed = time.time() - t0
@@ -361,9 +451,8 @@ async def run_single_episode(
     return episode_result
 
 
-# ---------------------------------------------------------------------------
 # Worker loop
-# ---------------------------------------------------------------------------
+
 
 async def worker_loop(
     worker_id: int,
@@ -388,16 +477,23 @@ async def worker_loop(
         episode_dir = output_dir / f"episode_{episode_id:03d}"
 
         # Restart container for a clean slate
-        logger.info("Worker %d: restarting container for episode %d", worker_id, episode_id)
+        logger.info(
+            "Worker %d: restarting container for episode %d", worker_id, episode_id
+        )
         ok = await asyncio.to_thread(reset_container, worker_id)
         if not ok:
-            logger.error("Worker %d: container restart failed, skipping episode %d",
-                         worker_id, episode_id)
-            results.append({
-                "episode_id": episode_id,
-                "worker_id": worker_id,
-                "error": "container_restart_failed",
-            })
+            logger.error(
+                "Worker %d: container restart failed, skipping episode %d",
+                worker_id,
+                episode_id,
+            )
+            results.append(
+                {
+                    "episode_id": episode_id,
+                    "worker_id": worker_id,
+                    "error": "container_restart_failed",
+                }
+            )
             episode_queue.task_done()
             continue
 
@@ -410,16 +506,19 @@ async def worker_loop(
         has_jsonl = ep_result.get("_artifacts", {}).get("pi_session", False)
         logger.info(
             "Episode %d complete: reward=%s phase=%s jsonl=%s turns=%d elapsed=%.0fs",
-            episode_id, reward, phase, has_jsonl, ep_result.get("turns", 0),
+            episode_id,
+            reward,
+            phase,
+            has_jsonl,
+            ep_result.get("turns", 0),
             ep_result.get("elapsed_s", 0),
         )
 
         episode_queue.task_done()
 
 
-# ---------------------------------------------------------------------------
 # Main orchestrator
-# ---------------------------------------------------------------------------
+
 
 async def collect(
     num_episodes: int = 20,
@@ -441,14 +540,19 @@ async def collect(
             if result_file.exists() and session_file.exists():
                 try:
                     data = json.loads(result_file.read_text())
-                    if data.get("episode_reward") is not None or data.get("frozen_scores"):
+                    if data.get("episode_reward") is not None or data.get(
+                        "frozen_scores"
+                    ):
                         ep_id = int(ep_dir.name.split("_")[1])
                         skip_episodes.add(ep_id)
                 except (json.JSONDecodeError, ValueError, IndexError):
                     pass
         if skip_episodes:
-            logger.info("Resuming: skipping %d completed episodes: %s",
-                         len(skip_episodes), sorted(skip_episodes))
+            logger.info(
+                "Resuming: skipping %d completed episodes: %s",
+                len(skip_episodes),
+                sorted(skip_episodes),
+            )
 
     remaining = num_episodes - len(skip_episodes)
     if remaining <= 0:
@@ -462,19 +566,24 @@ async def collect(
     logger.info("Workers:     %d", num_workers)
     logger.info("Output:      %s/", out)
     logger.info("Per episode: ~45 min (2700s episode + overhead)")
-    logger.info("Estimated:   ~%.0f min total",
-                 remaining / num_workers * 50)  # 45 min + 5 min overhead
+    logger.info(
+        "Estimated:   ~%.0f min total", remaining / num_workers * 50
+    )  # 45 min + 5 min overhead
     logger.info("=" * 70)
 
     # Verify Docker image exists
     result = subprocess.run(
         ["docker", "image", "inspect", DOCKER_IMAGE],
-        capture_output=True, timeout=10,
+        capture_output=True,
+        timeout=10,
     )
     if result.returncode != 0:
-        logger.error("Docker image %s not found. Build it first:\n"
-                     "  docker build -f docker/Dockerfile.pg -t %s .",
-                     DOCKER_IMAGE, DOCKER_IMAGE)
+        logger.error(
+            "Docker image %s not found. Build it first:\n"
+            "  docker build -f docker/Dockerfile.pg -t %s .",
+            DOCKER_IMAGE,
+            DOCKER_IMAGE,
+        )
         sys.exit(1)
 
     # Verify .env file exists
@@ -564,8 +673,12 @@ async def collect(
             "max": round(max(rewards), 4),
             "mean": round(sum(rewards) / len(rewards), 4),
             "median": round(rewards[len(rewards) // 2], 4),
-            "top_quartile_min": round(rewards[3 * len(rewards) // 4], 4) if len(rewards) >= 4 else None,
-            "bottom_quartile_max": round(rewards[len(rewards) // 4], 4) if len(rewards) >= 4 else None,
+            "top_quartile_min": round(rewards[3 * len(rewards) // 4], 4)
+            if len(rewards) >= 4
+            else None,
+            "bottom_quartile_max": round(rewards[len(rewards) // 4], 4)
+            if len(rewards) >= 4
+            else None,
         }
 
     summary_path = out / "collection_summary.json"
@@ -586,49 +699,59 @@ async def collect(
 
     # Check for missing JSONLs
     missing_jsonl = sum(
-        1 for r in results
-        if not r.get("_artifacts", {}).get("pi_session", False)
-        and not r.get("error")
+        1
+        for r in results
+        if not r.get("_artifacts", {}).get("pi_session", False) and not r.get("error")
     )
     if missing_jsonl > 0:
         logger.warning(
             "%d episodes completed but have NO pi_session.jsonl! "
-            "Check the --no-session fix.", missing_jsonl
+            "Check the --no-session fix.",
+            missing_jsonl,
         )
 
     logger.info("=" * 70)
 
 
-# ---------------------------------------------------------------------------
 # Entrypoint
-# ---------------------------------------------------------------------------
+
 
 def main():
     parser = argparse.ArgumentParser(
         description="Collect DPO trajectories across parallel workers",
     )
     parser.add_argument(
-        "--episodes", type=int, default=20,
+        "--episodes",
+        type=int,
+        default=20,
         help="Total number of episodes to collect (default: 20)",
     )
     parser.add_argument(
-        "--workers", type=int, default=4,
+        "--workers",
+        type=int,
+        default=4,
         help="Number of parallel Docker containers (default: 4)",
     )
     parser.add_argument(
-        "--output-dir", default="trajectories",
+        "--output-dir",
+        default="trajectories",
         help="Output directory for trajectory data (default: trajectories/)",
     )
     parser.add_argument(
-        "--resume", action="store_true",
+        "--resume",
+        action="store_true",
         help="Skip episodes that already have result.json + pi_session.jsonl",
     )
     parser.add_argument(
-        "--max-turns", type=int, default=None,
+        "--max-turns",
+        type=int,
+        default=None,
         help="Override MAX_TURNS per episode (default: 20)",
     )
     parser.add_argument(
-        "--episode-timeout", type=int, default=None,
+        "--episode-timeout",
+        type=int,
+        default=None,
         help="Override episode timeout in seconds (default: 2700 = 45 min)",
     )
     args = parser.parse_args()
@@ -640,12 +763,14 @@ def main():
         global EPISODE_TIMEOUT_S
         EPISODE_TIMEOUT_S = args.episode_timeout
 
-    asyncio.run(collect(
-        num_episodes=args.episodes,
-        num_workers=args.workers,
-        output_dir=args.output_dir,
-        resume=args.resume,
-    ))
+    asyncio.run(
+        collect(
+            num_episodes=args.episodes,
+            num_workers=args.workers,
+            output_dir=args.output_dir,
+            resume=args.resume,
+        )
+    )
 
 
 if __name__ == "__main__":
