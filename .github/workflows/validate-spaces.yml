@@ -6,13 +6,18 @@ on:
     types: [completed]
     branches: [main, feat/issue-6-hf-spaces-ghcr-deployment]
   workflow_dispatch:
+  # Temporary during branch-level validation; reverted before PR.
+  push:
+    branches: [feat/issue-6-hf-spaces-ghcr-deployment]
+    paths:
+      - ".github/workflows/validate-spaces.yml"
 
 permissions:
   contents: read
 
 jobs:
   probe:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

@@ -6,13 +6,22 @@ on:
     types: [completed]
     branches: [main, feat/issue-6-hf-spaces-ghcr-deployment]
   workflow_dispatch:
+  # Temporary during branch-level validation: fire on every push to the
+  # feature branch that touches this workflow or the Space assembly code.
+  # Reverted before PR.
+  push:
+    branches: [feat/issue-6-hf-spaces-ghcr-deployment]
+    paths:
+      - ".github/workflows/sync-hf-spaces.yml"
+      - "spaces/**"
+      - "scripts/prepare_hf_space.py"
 
 permissions:
   contents: read
 
 jobs:
   sync:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
