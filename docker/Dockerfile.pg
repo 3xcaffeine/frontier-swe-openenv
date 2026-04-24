@@ -11,7 +11,8 @@
 # Run:
 #   docker run -p 8000:8000 frontier-swe-pg:latest
 
-FROM openenv-base:latest
+ARG BASE_IMAGE=openenv-base:latest
+FROM ${BASE_IMAGE}
 
 ENV ZIG_VERSION=0.15.2
 ENV PG_MAJOR=18
