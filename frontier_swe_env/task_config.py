@@ -27,6 +27,13 @@ class TaskConfig(BaseModel):
     max_attempts_per_subtask: int
     episode_timeout_s: float
     per_turn_timeout_s: float = 180.0
+    # L1 test-command timeout (seconds). Some verifiers (e.g. notebook
+    # compression) run fit/compress/decompress stages and need more than
+    # the default 300s.
+    l1_timeout_s: float = 300.0
+    # Path to the structured reward.json written by the test command when
+    # l1_score_mode == "reward_json".
+    reward_json_path: str = "/logs/verifier/reward.json"
     # Task context for L2/L3 rubric prompts
     task_description: str = ""
     task_domain: str = ""

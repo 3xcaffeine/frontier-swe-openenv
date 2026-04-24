@@ -61,8 +61,13 @@ class FrontierSweEnvironment(MCPEnvironment):
         if task_config is not None:
             self.task_config = task_config
         else:
+            # D-008: allow task selection via env vars so task images can
+            # pick their own config without changing the app wiring.
+            import os
+            effective_name = os.environ.get("FSWE_TASK_NAME", task_name)
+            effective_mode = os.environ.get("FSWE_TASK_MODE", mode)
             from ..tasks import get_task_config
-            self.task_config = get_task_config(task_name, mode)
+            self.task_config = get_task_config(effective_name, effective_mode)
         self.episode_state = EpisodeState()
 
         # Build MCP server and register tools
@@ -76,6 +81,8 @@ class FrontierSweEnvironment(MCPEnvironment):
             test_command=self.task_config.visible_test_command,
             output_pattern=self.task_config.l1_output_pattern,
             score_mode=self.task_config.l1_score_mode,
+            reward_json_path=self.task_config.reward_json_path,
+            timeout_s=int(self.task_config.l1_timeout_s),
         )
 
         # Resolve grader LLM config.
@@ -566,11 +573,39 @@ class FrontierSweEnvironment(MCPEnvironment):
             + self.task_config.l1_weight * l1_test_score
         )
 
-        l1_summary = (
-            f"Gate: {gate_score:.2f}, "
-            f"Compat tests: {l1_test_score:.2f}, "
-            f"L1 blended: {l1_score:.2f}"
-        )
+        l1_extras: dict = {}
+        if self.task_config.l1_score_mode == "reward_json":
+            reward = getattr(self.test_rubric, "last_reward", None)
+            if reward is not None:
+                l1_extras = {
+                    "status": reward.get("status"),
+                    "reason": reward.get("reason"),
+                    "geom_mean_ratio": reward.get("geom_mean_ratio"),
+                    "compression_score": reward.get("compression_score"),
+                    "stage_timings": {
+                        "fit_elapsed_sec": reward.get("fit_elapsed_sec"),
+                        "compress_elapsed_sec": reward.get("compress_elapsed_sec"),
+                        "decompress_elapsed_sec": reward.get("decompress_elapsed_sec"),
+                    },
+                }
+                l1_summary = (
+                    f"Gate: {gate_score:.2f} | "
+                    f"Verifier: status={reward.get('status')}, "
+                    f"geom_mean_ratio={reward.get('geom_mean_ratio')}, "
+                    f"reason={reward.get('reason')} | "
+                    f"L1 blended: {l1_score:.2f}"
+                )
+            else:
+                l1_summary = (
+                    f"Gate: {gate_score:.2f} | Verifier: no reward.json produced | "
+                    f"L1 blended: {l1_score:.2f}"
+                )
+        else:
+            l1_summary = (
+                f"Gate: {gate_score:.2f}, "
+                f"Compat tests: {l1_test_score:.2f}, "
+                f"L1 blended: {l1_score:.2f}"
+            )
 
         # L2 scoring (async LLM judge)
         l2_result = await self.l2_rubric.grade(
@@ -606,7 +641,7 @@ class FrontierSweEnvironment(MCPEnvironment):
             self.episode_state.frozen_scores[subtask_id],
         )
 
-        return {
+        response = {
             "score": round(blended, 4),
             "l1_score": round(l1_score, 4),
             "l2_score": round(l2_score, 4),
@@ -616,6 +651,9 @@ class FrontierSweEnvironment(MCPEnvironment):
             "feedback": l2_result.feedback,
             "attempts_remaining": attempts_remaining,
         }
+        if l1_extras:
+            response["l1_extras"] = l1_extras
+        return response
 
     def get_status_payload(self) -> dict:
         """Handle get_status MCP tool call."""

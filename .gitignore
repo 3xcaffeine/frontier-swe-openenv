@@ -221,8 +221,16 @@ OpenEnv/
 frontier-swe/
 pi-mono/
 
-docs/
-tests/
+# Top-level only — do NOT match nested directories like tasks/*/tests/
+/docs/
+/tests/
 
+# JSON/TXT files are ignored by default (logs, configs, local data),
+# but allow vendored task assets and tracked reference data.
 *.json
 *.txt
+!tasks/**/*.json
+!tasks/**/*.txt
+!notes/**/*.json
+!notes/**/*.txt
+notes/
