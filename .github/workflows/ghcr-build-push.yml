@@ -4,6 +4,10 @@ on:
   push:
     branches: [main, feat/issue-6-hf-spaces-ghcr-deployment]
     paths-ignore:
+      - "spaces/**"
+      - "scripts/prepare_hf_space.py"
+      - ".github/workflows/sync-hf-spaces.yml"
+      - ".github/workflows/validate-spaces.yml"
       - ".github/workflows/check-space-file-size.yml"
       - "**/*.md"
   workflow_dispatch:
