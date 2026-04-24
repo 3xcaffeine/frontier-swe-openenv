@@ -24,6 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           lfs: true
 
       - uses: actions/setup-python@v5
@@ -37,6 +38,16 @@ jobs:
           python3 scripts/prepare_hf_space.py \
             --task ${{ matrix.task }} \
             --out /tmp/space-${{ matrix.task }}
+
+      - name: Pin Space Dockerfile to GHCR SHA
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          TASK: ${{ matrix.task }}
+        run: |
+          short=$(echo "$HEAD_SHA" | cut -c1-7)
+          sed -i -E "s|(ghcr.io/[^:]+):latest|\1:sha-${short}|" /tmp/space-${TASK}/Dockerfile
+          echo "--- pinned Dockerfile ---"
+          cat /tmp/space-${TASK}/Dockerfile
 
       - name: Ensure Space exists and apply secrets
         env:
