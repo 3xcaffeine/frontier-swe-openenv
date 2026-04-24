@@ -63,6 +63,7 @@ fi
 
 DATASET_REPO="${DATASET_REPO:-${HF_USERNAME}/frontier-swe-pg-task-001-dpo-trajectories}"
 OUTPUT_REPO="${OUTPUT_REPO:-${HF_USERNAME}/frontier-swe-dpo-qwen36-27b}"
+TRACKIO_SPACE="${TRACKIO_SPACE:-${HF_USERNAME}/frontier-swe-dpo-monitor}"
 
 DATASET_FILE="$PROJECT_ROOT/datasets/dpo_train.jsonl"
 if [[ ! -f "$DATASET_FILE" ]]; then
@@ -105,6 +106,7 @@ echo "    Flavor:   $FLAVOR"
 echo "    Model:    $MODEL_NAME"
 echo "    Dataset:  $DATASET_REPO"
 echo "    Output:   $OUTPUT_REPO"
+echo "    Trackio:  https://huggingface.co/spaces/$TRACKIO_SPACE"
 echo "    Max Seq:  $MAX_SEQ"
 echo "    Timeout:  $TIMEOUT"
 echo ""
@@ -120,6 +122,7 @@ JOB_CMD=(
     --model-name "$MODEL_NAME"
     --output-repo "$OUTPUT_REPO"
     --max-seq-length "$MAX_SEQ"
+    --trackio-space "$TRACKIO_SPACE"
 )
 
 if [[ "$DRY_RUN" == "true" ]]; then

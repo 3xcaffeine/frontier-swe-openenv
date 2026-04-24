@@ -9,6 +9,7 @@
 #     "accelerate",
 #     "peft",
 #     "huggingface_hub",
+#     "trackio",
 # ]
 # ///
 """Self-contained multi-turn DPO training script for HF Jobs.
@@ -147,10 +148,16 @@ def main() -> None:
     p.add_argument("--warmup-steps", type=int, default=5)
     p.add_argument("--logging-steps", type=int, default=1)
     p.add_argument("--save-merged-16bit", action="store_true")
+    p.add_argument("--trackio-space", default=None, help="HF Space ID for Trackio dashboard (e.g. user/dpo-monitor)")
+    p.add_argument("--run-name", default="dpo-qwen36-27b", help="Trackio run name")
     p.add_argument("--seed", type=int, default=3407)
     args = p.parse_args()
 
     _seed_everything(args.seed)
+
+    if args.trackio_space:
+        os.environ["TRACKIO_SPACE_ID"] = args.trackio_space
+        logger.info("Trackio dashboard: https://huggingface.co/spaces/%s", args.trackio_space)
 
     dataset = _load_and_prepare_dataset(args.dataset_id, args.dataset_split)
 
@@ -202,7 +209,8 @@ def main() -> None:
         max_length=args.max_seq_length,
         max_prompt_length=max_prompt_length,
         beta=args.beta,
-        report_to=[],
+        report_to=["trackio"] if args.trackio_space else [],
+        run_name=args.run_name,
         remove_unused_columns=False,
         push_to_hub=push_to_hub,
         hub_model_id=args.output_repo if push_to_hub else None,
