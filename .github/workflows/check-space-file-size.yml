@@ -1,0 +1,33 @@
+name: Space File Size Guard
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Reject non-LFS files over 10 MB
+        run: |
+          set -euo pipefail
+          big=$(git ls-files | while read -r f; do
+            [ -f "$f" ] || continue
+            sz=$(wc -c < "$f")
+            if [ "$sz" -gt 10485760 ]; then
+              # LFS-tracked files are pointer stubs (~130 bytes), so any large
+              # file in the working tree here is real content, not a pointer.
+              echo "$sz $f"
+            fi
+          done)
+          if [ -n "$big" ]; then
+            echo "Files over 10 MB not tracked by LFS:"
+            echo "$big"
+            exit 1
+          fi
