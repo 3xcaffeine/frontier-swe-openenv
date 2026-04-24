@@ -654,6 +654,7 @@ dependencies = [
     { name = "openenv-core" },
     { name = "torch" },
     { name = "torchvision" },
+    { name = "trackio" },
     { name = "transformers" },
     { name = "trl" },
     { name = "unsloth" },
@@ -679,6 +680,7 @@ requires-dist = [
     { name = "requests", marker = "extra == 'test'" },
     { name = "torch", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchvision", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "trackio", specifier = ">=0.25.0" },
     { name = "transformers", specifier = ">=5" },
     { name = "trl" },
     { name = "unsloth", git = "https://github.com/unslothai/unsloth" },
@@ -2550,6 +2552,24 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd8dac228323f2777d886cb206987444e4bce66338dd4/tqdm-4.67.3.tar.gz", hash = "sha256:7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb", size = 169598, upload-time = "2026-02-03T17:35:53.048Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl", hash = "sha256:ee1e4c0e59148062281c49d80b25b67771a127c85fc9676d3be5f243206826bf", size = 78374, upload-time = "2026-02-03T17:35:50.982Z" },
+]
+
+[[package]]
+name = "trackio"
+version = "0.25.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "gradio-client" },
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "orjson" },
+    { name = "pillow" },
+    { name = "python-multipart" },
+    { name = "starlette" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e7/4d/2aa0e1ca6daebdfac79fadd2ab308d5880c8d0305b2ce8b88900f95a8415/trackio-0.25.0-py3-none-any.whl", hash = "sha256:6c1ae7decef6e35d1165a6b2536d6df8c67594329bdf6bd9f1786c153a532b9f", size = 1653706, upload-time = "2026-04-23T15:45:29.887Z" },
 ]
 
 [[package]]

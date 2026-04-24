@@ -1,0 +1,263 @@
+# /// script
+# dependencies = [
+#     "unsloth",
+#     "unsloth_zoo",
+#     "trl>=0.22",
+#     "datasets",
+#     "torch",
+#     "bitsandbytes",
+#     "accelerate",
+#     "peft",
+#     "huggingface_hub",
+# ]
+# ///
+"""Self-contained multi-turn DPO training script for HF Jobs.
+
+Designed to run via:
+    hf jobs uv run scripts/train_dpo_hfjob.py --flavor a100-large --timeout 4h \
+        --secrets HF_TOKEN --env HF_ENDPOINT=https://hf-mirror.com
+
+The script:
+  1. Downloads the DPO dataset from a HF Hub dataset repo
+  2. Converts message-list columns to text
+  3. Trains bf16 LoRA DPO with Unsloth + TRL
+  4. Pushes the trained adapter to HF Hub
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import random
+from pathlib import Path
+from typing import Any
+
+import unsloth
+from unsloth import FastLanguageModel, is_bfloat16_supported
+
+try:
+    from unsloth import PatchDPOTrainer
+    PatchDPOTrainer()
+except ImportError:
+    pass
+
+import torch
+from datasets import Dataset, load_dataset
+from trl import DPOConfig, DPOTrainer
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("train_dpo_hfjob")
+
+
+def _seed_everything(seed: int) -> None:
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+def _normalize_text_field(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        if all(isinstance(item, dict) for item in value):
+            return _render_messages(value)
+        return "\n\n".join(str(item) for item in value)
+    return str(value or "")
+
+
+def _render_messages(messages: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for msg in messages:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        if role == "user":
+            lines.append(f"<|user|>\n{content}".strip())
+        elif role == "assistant":
+            text = f"<|assistant|>\n{content}".strip()
+            lines.append(text)
+            tool_calls = msg.get("tool_calls", [])
+            if tool_calls:
+                lines.append(f"<|assistant_tool_calls|>\n{json.dumps(tool_calls, ensure_ascii=False)}")
+        elif role == "tool":
+            tool_name = msg.get("name", "tool")
+            tool_call_id = msg.get("tool_call_id", "")
+            prefix = f"<|tool:{tool_name}:{tool_call_id}|>" if tool_call_id else f"<|tool:{tool_name}|>"
+            lines.append(f"{prefix}\n{content}".strip())
+        else:
+            lines.append(f"<|{role or 'unknown'}|>\n{content}".strip())
+    return "\n\n".join(lines).strip()
+
+
+def _to_dpo_text_columns(example: dict[str, Any]) -> dict[str, str]:
+    return {
+        "__prompt_text": _normalize_text_field(example.get("prompt")),
+        "__chosen_text": _normalize_text_field(example.get("chosen")),
+        "__rejected_text": _normalize_text_field(example.get("rejected")),
+    }
+
+
+def _load_and_prepare_dataset(dataset_id: str, split: str = "train") -> Dataset:
+    logger.info("Loading dataset %s (split=%s) from Hub", dataset_id, split)
+    ds = load_dataset(dataset_id, split=split)
+    logger.info("Loaded %d raw rows", len(ds))
+
+    ds = ds.map(_to_dpo_text_columns, num_proc=1)
+    keep = {"__prompt_text", "__chosen_text", "__rejected_text"}
+    drop = [c for c in ds.column_names if c not in keep]
+    if drop:
+        ds = ds.remove_columns(drop)
+    ds = ds.rename_columns({
+        "__prompt_text": "prompt",
+        "__chosen_text": "chosen",
+        "__rejected_text": "rejected",
+    })
+    ds = ds.filter(
+        lambda row: (
+            bool(_normalize_text_field(row.get("prompt")).strip())
+            and bool(_normalize_text_field(row.get("chosen")).strip())
+            and bool(_normalize_text_field(row.get("rejected")).strip())
+        ),
+    )
+    logger.info("Prepared %d rows after filtering", len(ds))
+    return ds
+
+
+def main() -> None:
+    p = argparse.ArgumentParser()
+    p.add_argument("--dataset-id", required=True, help="HF Hub dataset repo (e.g. user/dpo-trajectories)")
+    p.add_argument("--dataset-split", default="train")
+    p.add_argument("--model-name", default="Qwen/Qwen3.6-27B")
+    p.add_argument("--output-repo", default=None, help="HF Hub repo to push adapter (e.g. user/dpo-qwen36-27b)")
+    p.add_argument("--output-dir", default="/tmp/dpo_output")
+    p.add_argument("--max-seq-length", type=int, default=16384)
+    p.add_argument("--max-prompt-length", type=int, default=None)
+    p.add_argument("--lora-r", type=int, default=64)
+    p.add_argument("--lora-alpha", type=int, default=64)
+    p.add_argument("--beta", type=float, default=0.1)
+    p.add_argument("--learning-rate", type=float, default=5e-6)
+    p.add_argument("--num-train-epochs", type=float, default=1.0)
+    p.add_argument("--per-device-train-batch-size", type=int, default=1)
+    p.add_argument("--gradient-accumulation-steps", type=int, default=8)
+    p.add_argument("--warmup-steps", type=int, default=5)
+    p.add_argument("--logging-steps", type=int, default=1)
+    p.add_argument("--save-merged-16bit", action="store_true")
+    p.add_argument("--seed", type=int, default=3407)
+    args = p.parse_args()
+
+    _seed_everything(args.seed)
+
+    dataset = _load_and_prepare_dataset(args.dataset_id, args.dataset_split)
+
+    max_prompt_length = args.max_prompt_length or max(1024, int(args.max_seq_length * 0.75))
+
+    logger.info("Loading model %s", args.model_name)
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=args.model_name,
+        max_seq_length=args.max_seq_length,
+        dtype=None,
+        load_in_4bit=False,
+    )
+
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=0,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj", "out_proj"],
+        bias="none",
+        use_gradient_checkpointing="unsloth",
+        random_state=args.seed,
+        max_seq_length=args.max_seq_length,
+        use_rslora=False,
+        loftq_config=None,
+    )
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    push_to_hub = bool(args.output_repo)
+
+    dpo_args = DPOConfig(
+        output_dir=str(output_dir),
+        learning_rate=args.learning_rate,
+        num_train_epochs=args.num_train_epochs,
+        per_device_train_batch_size=args.per_device_train_batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        warmup_steps=args.warmup_steps,
+        logging_steps=args.logging_steps,
+        save_steps=9999,
+        save_total_limit=1,
+        lr_scheduler_type="cosine",
+        optim="adamw_8bit",
+        weight_decay=0.01,
+        bf16=is_bfloat16_supported(),
+        fp16=not is_bfloat16_supported(),
+        max_length=args.max_seq_length,
+        max_prompt_length=max_prompt_length,
+        beta=args.beta,
+        report_to=[],
+        remove_unused_columns=False,
+        push_to_hub=push_to_hub,
+        hub_model_id=args.output_repo if push_to_hub else None,
+    )
+
+    from transformers.models.auto.modeling_auto import MODEL_FOR_VISION_2_SEQ_MAPPING_NAMES
+    _popped: dict[str, str] = {}
+    for key in list(MODEL_FOR_VISION_2_SEQ_MAPPING_NAMES.keys()):
+        if "qwen" in key.lower():
+            _popped[key] = MODEL_FOR_VISION_2_SEQ_MAPPING_NAMES.pop(key)
+    if _popped:
+        logger.info("Removed vision mapping keys for text-only DPO: %s", list(_popped))
+
+    raw_tokenizer = getattr(tokenizer, "tokenizer", tokenizer)
+
+    logger.info("Starting DPO training — %d samples, max_length=%d", len(dataset), args.max_seq_length)
+    trainer = DPOTrainer(
+        model=model,
+        ref_model=None,
+        args=dpo_args,
+        train_dataset=dataset,
+        processing_class=raw_tokenizer,
+    )
+
+    MODEL_FOR_VISION_2_SEQ_MAPPING_NAMES.update(_popped)
+
+    result = trainer.train()
+    logger.info("Training finished: %s", result.metrics)
+
+    trainer.save_model(str(output_dir))
+    raw_tokenizer.save_pretrained(str(output_dir))
+
+    metrics_path = output_dir / "train_metrics.json"
+    metrics_path.write_text(json.dumps(result.metrics, indent=2))
+
+    if push_to_hub:
+        logger.info("Pushing adapter to %s", args.output_repo)
+        trainer.push_to_hub()
+
+    if args.save_merged_16bit:
+        merged_dir = output_dir / "merged_16bit"
+        logger.info("Saving merged 16-bit model to %s", merged_dir)
+        model.save_pretrained_merged(str(merged_dir), tokenizer, save_method="merged_16bit")
+        if push_to_hub:
+            from huggingface_hub import HfApi
+            api = HfApi()
+            api.upload_folder(
+                folder_path=str(merged_dir),
+                repo_id=f"{args.output_repo}-merged",
+                repo_type="model",
+                create_pr=False,
+            )
+
+    logger.info("Done")
+
+
+if __name__ == "__main__":
+    main()
