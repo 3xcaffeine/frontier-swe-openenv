@@ -71,11 +71,21 @@
 - Decision: read `FSWE_TASK_NAME` and `FSWE_TASK_MODE` from environment in `FrontierSweEnvironment.__init__`, falling back to the explicit `task_name`/`mode` constructor args. Per-image `ENV FSWE_TASK_NAME=notebook` now actually selects the notebook config; previously the env defaulted to PG regardless.
 - Why: the Dockerfile.notebook set `ENV FSWE_TASK_NAME=notebook` per D-008's intent, but the env class never consumed the variable. Caught during OpenEnv server smoke (`time_remaining_s=900` instead of 3600 revealed PG config was active). Three-line fix in `__init__`.
 
-## D-012: Defer Full pi Episode
+## D-012: Full pi Episode Validated End-To-End
 
 - Date: 2026-04-25
-- Decision: implementation stops at container + OpenEnv smoke + MCP startup. Full pi-driven episode (plan/submit/advance with real LLM judge) requires real `FSWE_AGENT_*` and `FSWE_GRADER_*` credentials and is deferred to a separate validation step.
-- Why: the work in scope for issue #4 is onboarding the task; episode validation depends on external credentials and compute that aren't part of this branch. Dummy-credential smoke already confirms the path is wired correctly (reset→PLANNING, pi process starts, MCP config written, notebook config in effect).
+- Decision: full pi-driven episode ran successfully against the notebook-compression image with real agent (qwen-3.5-27b@siemens) and grader (zai-org/GLM-5.1:fastest@hf-router). Supersedes the earlier "deferred" stance.
+- Evidence:
+  - L3 plan score: 0.80 (3-subtask plan accepted first try)
+  - S1 submit_subtask: gate=1.00, l1_test=0.80, l2=0.83, blended=0.85
+  - S2 submit_subtask: gate=1.00, l1_test=0.80, l2=0.77, blended=0.83
+  - advance from S1→S2 correct
+  - Agent authored a zstd-wrapper codec that passed byte-exact round-trip
+  - Full container log: `artifacts/issue-4/notebook-baseline-container.log`
+- Observations:
+  - Pi initially called `submit_subtask` with a stray `description` kwarg; MCP returned a pydantic ValidationError with the expected schema, and pi self-corrected on the retry. No code change needed — the error surface is usable.
+  - Client WebSocket timed out at 600s while pi was still working on S2; not a bug, just a bounded-budget smoke. In training, the baseline runner's `--timeout` can be raised.
+  - No pi `sessions/` dir exists under `--no-session` mode, so the baseline's `_dump_container_logs` skips the session copy; container logs carry the full trajectory.
 
 ## D-013: Reward Anchors Validated By Smoke
 

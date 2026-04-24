@@ -25,7 +25,7 @@ Reset 2026-04-24 after discovering the prior tracker described aspirational stat
 | P9 | Verifier smoke test in container (stub → fail) | P8 | DONE | upstream `run` stub → `status=fail, reason="fit stage failed: exit code 1"` |
 | P10 | Verifier smoke test with trivial zstd codec (round-trip ok) | P8 | DONE | zstd -19 wrapper → `status=ok, geom_mean_ratio=0.326335, compression_score=0.559899`, round-trip OK on 80 notebooks (fit 0.017s, compress 27.5s, decompress 0.32s) |
 | P11 | End-to-end OpenEnv server + notebook-task selection | P10 | DONE | server boots 3s; `/health` OK; `FSWE_TASK_NAME=notebook` resolves correctly (`time_remaining_s=3600` confirms notebook config, not PG fallback); `/reset` returns `PLANNING`; pi harness starts with correct agent/grader config |
-| P12 | Full pi episode with real agent/grader (plan/submit/advance) | P11 | DEFERRED | needs real `FSWE_AGENT_API_KEY`/`FSWE_GRADER_API_KEY` + endpoints; see D-012 |
+| P12 | Full pi episode with real agent/grader (plan/submit/advance) | P11 | DONE | pi ran end-to-end: L3 plan_score=0.80; S1 blended=0.85 (gate 1.0, l1_test 0.80, l2 0.83); S2 blended=0.83 (gate 1.0, l1_test 0.80, l2 0.77); advance OK. Agent=qwen-3.5-27b@siemens, grader=zai-org/GLM-5.1:fastest@hf-router. Logs: `artifacts/issue-4/notebook-baseline-container.log` |
 | P13 | DoD verification and docs closeout | P12 | TODO | |
 
 ## Current Focus
