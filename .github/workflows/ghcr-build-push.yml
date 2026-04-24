@@ -2,7 +2,7 @@ name: GHCR — Build & Push Images
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/issue-6-hf-spaces-ghcr-deployment]
   workflow_dispatch:
 
 concurrency:

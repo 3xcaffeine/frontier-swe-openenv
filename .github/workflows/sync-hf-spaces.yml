@@ -4,7 +4,7 @@ on:
   workflow_run:
     workflows: [GHCR — Build & Push Images]
     types: [completed]
-    branches: [main]
+    branches: [main, feat/issue-6-hf-spaces-ghcr-deployment]
   workflow_dispatch:
 
 permissions:
