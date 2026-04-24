@@ -129,7 +129,7 @@ def pg_demo_config() -> TaskConfig:
         max_attempts_per_subtask=3,
         episode_timeout_s=5400,
         per_turn_timeout_s=600,
-        task_description="A PostgreSQL wire-compatible adapter written in Zig that translates PG protocol to SQLite",
-        task_domain="systems programming",
+        task_description="Build a PostgreSQL 18 server in Zig that uses SQLite for storage",
+        task_domain="Implementation",
         scoring_context="L1 runs pg_compat_test.sh (72 graded SQL tests across 9 tiers)",
     )
