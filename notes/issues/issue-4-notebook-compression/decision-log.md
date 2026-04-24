@@ -65,7 +65,23 @@
 - Why: faithful snapshot aids future onboarding and cross-reference; no ambiguity about what upstream actually shipped.
 - Cost: ~70 MB in git history (dominated by the hidden bundle, which we would vendor anyway).
 
+## D-011: Wire `FSWE_TASK_NAME` / `FSWE_TASK_MODE` In Core Env `__init__`
+
+- Date: 2026-04-25
+- Decision: read `FSWE_TASK_NAME` and `FSWE_TASK_MODE` from environment in `FrontierSweEnvironment.__init__`, falling back to the explicit `task_name`/`mode` constructor args. Per-image `ENV FSWE_TASK_NAME=notebook` now actually selects the notebook config; previously the env defaulted to PG regardless.
+- Why: the Dockerfile.notebook set `ENV FSWE_TASK_NAME=notebook` per D-008's intent, but the env class never consumed the variable. Caught during OpenEnv server smoke (`time_remaining_s=900` instead of 3600 revealed PG config was active). Three-line fix in `__init__`.
+
+## D-012: Defer Full pi Episode
+
+- Date: 2026-04-25
+- Decision: implementation stops at container + OpenEnv smoke + MCP startup. Full pi-driven episode (plan/submit/advance with real LLM judge) requires real `FSWE_AGENT_*` and `FSWE_GRADER_*` credentials and is deferred to a separate validation step.
+- Why: the work in scope for issue #4 is onboarding the task; episode validation depends on external credentials and compute that aren't part of this branch. Dummy-credential smoke already confirms the path is wired correctly (reset→PLANNING, pi process starts, MCP config written, notebook config in effect).
+
+## D-013: Reward Anchors Validated By Smoke
+
+- Date: 2026-04-25
+- Decision: keep initial `R_max=1.0, R_min=0.15` anchors. Trivial zstd-19 wrapper produced `geom_mean_ratio=0.326335` → normalized `(1.0-0.326)/(1.0-0.15)=0.793`, which is reasonable headroom for S2/S3 codec improvements. Tune after observing real agent runs in training.
+
 ## Open Decisions
 
-- Whether `scripts/run_baseline.py` is task-agnostic enough for notebook-compression, or needs a second variant. Resolve during P11.
-- `R_min` / `R_max` anchors for `reward_json` score normalization are initial guesses. Revisit after first real episodes and tune against observed `geom_mean_ratio` distributions.
+- Whether `scripts/run_baseline.py` is task-agnostic enough for notebook-compression, or needs a second variant. Resolve when P12 runs.

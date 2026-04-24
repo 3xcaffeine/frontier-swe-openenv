@@ -61,8 +61,13 @@ class FrontierSweEnvironment(MCPEnvironment):
         if task_config is not None:
             self.task_config = task_config
         else:
+            # D-008: allow task selection via env vars so task images can
+            # pick their own config without changing the app wiring.
+            import os
+            effective_name = os.environ.get("FSWE_TASK_NAME", task_name)
+            effective_mode = os.environ.get("FSWE_TASK_MODE", mode)
             from ..tasks import get_task_config
-            self.task_config = get_task_config(task_name, mode)
+            self.task_config = get_task_config(effective_name, effective_mode)
         self.episode_state = EpisodeState()
 
         # Build MCP server and register tools
