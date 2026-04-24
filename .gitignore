@@ -224,7 +224,12 @@ pi-mono/
 docs/
 tests/
 
-*.json
+*.json*
 *.txt
 
 trajectories*/
+
+.hf_cache/
+outputs/
+
+unsloth_compiled_cache/
