@@ -13,11 +13,11 @@
 - Decision: reuse postgres task implementation structure (layout, wiring, verifier pattern), but do not reuse postgres-specific assumptions.
 - Why: architecture is task-agnostic by design after PR #10.
 
-## D-003: Keep Core Environment Stable
+## D-003 (revised): Core Env May Evolve For Task-Agnostic Generalizations
 
 - Date: 2026-04-24
-- Decision: avoid modifying core episode state machine unless notebook task contract requires it.
-- Why: reduces regression risk across existing task(s).
+- Decision: supersede original "avoid core changes" stance. Core env may change when the change is a task-agnostic generalization (not a task-specific shim). For issue #4 this covers: adding `TaskConfig.l1_timeout_s`, adding `TestOutputRubric` score_mode `reward_json`, and enriching the `submit_subtask_payload` feedback.
+- Why: rigid "no core changes" would force us to regex-parse a structured JSON result via stdout, throwing away hard-fail distinction and per-notebook metadata that the LLM judge and training signal benefit from.
 
 ## D-004: Dependency-First Execution
 
@@ -28,20 +28,22 @@
 ## D-005: Vendor Hidden Bundle In Repo
 
 - Date: 2026-04-24
-- Decision: include upstream `tests/hidden_test_set_bundle.zip` in local task scaffold.
-- Why: ensures local verifier parity from day one.
+- Decision: include upstream `tests/hidden_test_set_bundle.zip` (69 MB, 80 `.ipynb`) in local task scaffold.
+- Why: ensures local verifier parity from day one; upstream intended the bundle to be available at verifier runtime.
+- Caveat: bundle is effectively public via this repo, so the "hidden holdout" is not genuinely hidden from an agent that reads the repo. Acceptable for training/demo; flag to issue #9 (reward hacking).
 
-## D-006: L1 Starts With Lighter Ratio Mode
-
-- Date: 2026-04-24
-- Decision: use a lightweight visible ratio-based L1 (`Total: N/M passed`) initially, then iterate toward stricter parity.
-- Why: faster integration path while environment/task wiring is stabilized.
-
-## D-007: Notebook Training Timeouts
+## D-006 (revised): L1 Scoring Via Structured reward.json, Not Stdout Regex
 
 - Date: 2026-04-24
-- Decision: set notebook training episode timeout to 3600s and per-turn timeout to 600s.
-- Why: task has longer fit/compress/decompress stages than postgres and needs longer command windows.
+- Decision: add a `"reward_json"` score mode to `TestOutputRubric` that reads `/logs/verifier/reward.json` after the verifier runs. Hard-fail (`status != "ok"`) returns 0.0. Otherwise `geom_mean_ratio` is normalized to [0,1] via anchored clamp (`R_max=1.0 → 0`, `R_min=0.15 → 1.0`).
+- Why: upstream `compute_reward.py` already produces a rich structured result (status, hard-fail reason, per-notebook metadata, stage timings). Stdout regex throws that richness away, hurting both the LLM judge summary and in-context feedback the agent needs to iterate.
+- Supersedes: original D-006 ("Total: N/M passed" stdout ratio).
+
+## D-007 (revised): Scaled-Down Timeouts For Small-Scale Training
+
+- Date: 2026-04-24
+- Decision: use episode_timeout_s=3600, per_turn_timeout_s=600, l1_timeout_s=1800; verifier stage limits NOTEBOOK_FIT/COMPRESS=600, NOTEBOOK_DECOMPRESS=300 (half of upstream).
+- Why: upstream sizing (8h episode, 14400s verifier) targets a frontier-capable agent. We train a 36B model across many episode iterations and cannot afford upstream latencies. Scoring signal is still informative because the verifier timing subscores reflect stage duration directly.
 
 ## D-008: Task Selection Via Environment Variables
 
@@ -49,6 +51,21 @@
 - Decision: support `FSWE_TASK_NAME` and `FSWE_TASK_MODE` in environment initialization.
 - Why: allows task-specific images to select configs without changing app wiring.
 
+## D-009: Visible Corpus Synthesized From Hidden Bundle At Image-Build Time
+
+- Date: 2026-04-24
+- Decision: there is no standalone visible-corpus dataset in the upstream repo — upstream's `$DATA_ROOT/visible/` is supplied by Harbor at job-launch time via bind mount. For our standalone image we split ~75% of the hidden bundle deterministically into `/mnt/notebook-data/visible/` at image build time, and leave the full 80-file bundle in place for verifier scoring.
+- Why: the agent needs a visible corpus to `fit` against; no other source is available without pulling from external datasets (blocked by `allow_internet=false`).
+- Caveat: visible ⊂ hidden, so the agent can in principle memorize the bundle and get an artificially low `geom_mean_ratio`. Mitigation: verifier enforces byte-exact round-trip and one-to-one file attribution, so memorization alone does not produce a valid submission — the agent must still implement a real lossless codec. Log to issue #9.
+
+## D-010: Vendor Upstream Folder Verbatim; Prune At Runtime Only
+
+- Date: 2026-04-24
+- Decision: copy the entire upstream `tasks/notebook-compression/` folder as-is (scripts, sources, oracle.yaml, job.yaml, etc.) into local `tasks/notebook-compression/`. The Dockerfile / gate script / rubric consume only a subset — see runtime-exclusion list in `implementation-plan.md`.
+- Why: faithful snapshot aids future onboarding and cross-reference; no ambiguity about what upstream actually shipped.
+- Cost: ~70 MB in git history (dominated by the hidden bundle, which we would vendor anyway).
+
 ## Open Decisions
 
-- Do we need a separate baseline runner script for notebook task, or can `scripts/run_baseline.py` be generalized?
+- Whether `scripts/run_baseline.py` is task-agnostic enough for notebook-compression, or needs a second variant. Resolve during P11.
+- `R_min` / `R_max` anchors for `reward_json` score normalization are initial guesses. Revisit after first real episodes and tune against observed `geom_mean_ratio` distributions.
