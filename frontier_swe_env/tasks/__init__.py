@@ -50,3 +50,8 @@ def list_tasks() -> list[str]:
 from .pg import pg_demo_config, pg_training_config  # noqa: E402
 
 register_task("pg", pg_training_config, pg_demo_config)
+
+from .notebook_compression import notebook_demo_config, notebook_training_config  # noqa: E402
+
+register_task("notebook", notebook_training_config, notebook_demo_config)
+register_task("notebook-compression", notebook_training_config, notebook_demo_config)

@@ -1,0 +1,94 @@
+# Notebook Compression — Task Image
+#
+# Extends openenv-base with compression tooling, scientific Python deps,
+# the vendored upstream verifier, and a build-time-synthesized visible
+# corpus.
+#
+# Build (must build base first):
+#   podman build -f docker/Dockerfile.base     -t openenv-base:latest .
+#   podman build -f docker/Dockerfile.notebook -t frontier-swe-notebook:latest .
+#
+# Run:
+#   podman run -p 8000:8000 frontier-swe-notebook:latest
+
+FROM openenv-base:latest
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV DATA_ROOT=/mnt/notebook-data
+ENV TASK_BUDGET_SECS=3600
+ENV FSWE_TASK_NAME=notebook
+ENV FSWE_TASK_MODE=training
+
+# System compression tools + unzip (for bundle extraction) + jq (debug)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    zstd \
+    brotli \
+    lz4 \
+    zlib1g-dev \
+    liblzma-dev \
+    libbz2-dev \
+    unzip \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Scientific Python + compression bindings (installed into the OpenEnv venv
+# that Dockerfile.base set up at /opt/openenv-venv)
+RUN pip install --no-cache-dir \
+    numpy \
+    pandas \
+    scipy \
+    pyarrow \
+    joblib \
+    tqdm \
+    nbformat \
+    jsonschema \
+    datasketch \
+    zstandard \
+    brotli \
+    lz4
+
+# Workspace stub (upstream run script — fails on any invocation until the
+# agent edits it)
+COPY tasks/notebook-compression/environment/workspace/run /app/run
+RUN chmod +x /app/run
+
+# Verifier scripts + hidden bundle live at /opt/verifier/
+RUN mkdir -p /opt/verifier /logs/verifier /mnt/notebook-data
+COPY tasks/notebook-compression/tests/compute_reward.py /opt/verifier/
+COPY tasks/notebook-compression/tests/scoring_core.py /opt/verifier/
+COPY tasks/notebook-compression/tests/test.sh /opt/verifier/
+COPY tasks/notebook-compression/tests/hidden_test_set_bundle.zip /opt/verifier/
+RUN chmod +x /opt/verifier/test.sh
+
+# Build-time visible-corpus synthesis (see decision-log D-009)
+COPY scripts/split_visible_corpus.py /tmp/split_visible_corpus.py
+RUN python3 /tmp/split_visible_corpus.py \
+    --bundle /opt/verifier/hidden_test_set_bundle.zip \
+    --out /mnt/notebook-data/visible \
+    --manifest /mnt/notebook-data/manifest.json \
+    --ratio 0.75 --seed 17 \
+    && rm /tmp/split_visible_corpus.py
+
+# Gate checks
+COPY scripts/notebook_gate_checks.sh /app/gate_checks.sh
+RUN chmod +x /app/gate_checks.sh
+
+# OpenEnv core code (overwrites what's in the base so rubric changes land)
+COPY frontier_swe_env/ /opt/openenv/frontier_swe_env/
+COPY pyproject.toml /opt/openenv/pyproject.toml
+COPY scripts/ /opt/openenv/scripts/
+ENV PYTHONPATH="/opt/openenv"
+
+# Git baseline for L2 diff tracking
+RUN cd /app \
+    && git config --global user.email "agent@frontier-swe-openenv" \
+    && git config --global user.name "agent" \
+    && git init && git add -A && git commit -m "initial stub"
+
+# Re-copy entrypoint (matches Dockerfile.pg pattern for explicitness;
+# also picks up any local changes since base was built)
+COPY docker/openenv_entrypoint.sh /app/openenv_entrypoint.sh
+RUN chmod +x /app/openenv_entrypoint.sh
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
