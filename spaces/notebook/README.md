@@ -18,3 +18,4 @@ OpenEnv-shaped FastAPI service hosting the notebook-compression task.
 - MCP JSON-RPC: `/mcp`
 
 Deployed automatically from `main` via the `sync-hf-spaces` workflow.
+
