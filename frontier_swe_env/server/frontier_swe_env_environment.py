@@ -34,10 +34,10 @@ from openenv.core.harnesses.types import HarnessConfig, HarnessEventType
 from ..models import EpisodeState, FrontierSweAction, FrontierSweObservation
 from ..rubrics.episode_rubric import EpisodeRubric
 from ..rubrics.gate_checks import GateCheckRubric
-from ..rubrics.l1_tests import PGCompatTestRubric
+from ..rubrics.l1_tests import TestOutputRubric
 from ..rubrics.l2_code_review import L2CodeReviewRubric
 from ..rubrics.l3_plan_review import L3PlanReviewRubric
-from ..task_config import TaskConfig, pg_training_config
+from ..task_config import TaskConfig
 from .mcp_tools import register_mcp_tools
 
 logger = logging.getLogger(__name__)
@@ -55,8 +55,14 @@ class FrontierSweEnvironment(MCPEnvironment):
     def __init__(
         self,
         task_config: Optional[TaskConfig] = None,
+        task_name: str = "pg",
+        mode: str = "training",
     ) -> None:
-        self.task_config = task_config or pg_training_config()
+        if task_config is not None:
+            self.task_config = task_config
+        else:
+            from ..tasks import get_task_config
+            self.task_config = get_task_config(task_name, mode)
         self.episode_state = EpisodeState()
 
         # Build MCP server and register tools
@@ -66,8 +72,10 @@ class FrontierSweEnvironment(MCPEnvironment):
 
         # Rubric components
         self.gate_rubric = GateCheckRubric(self.task_config.gate_script_path)
-        self.test_rubric = PGCompatTestRubric(
+        self.test_rubric = TestOutputRubric(
             test_command=self.task_config.visible_test_command,
+            output_pattern=self.task_config.l1_output_pattern,
+            score_mode=self.task_config.l1_score_mode,
         )
 
         # Resolve grader LLM config.
@@ -101,11 +109,14 @@ class FrontierSweEnvironment(MCPEnvironment):
 
         self.l2_rubric = L2CodeReviewRubric(
             workspace_dir=self.task_config.workspace_dir,
+            task_description=self.task_config.task_description,
+            dimensions=self.task_config.effective_l2_dimensions,
             grader_model=grader_model,
             api_base_url=grader_api_base,
             api_key=grader_api_key,
         )
         self.l3_rubric = L3PlanReviewRubric(
+            task_description=self.task_config.task_description,
             grader_model=grader_model,
             api_base_url=grader_api_base,
             api_key=grader_api_key,
@@ -547,7 +558,7 @@ class FrontierSweEnvironment(MCPEnvironment):
         # L1 scoring (deterministic, local subprocess)
         gate_score = self.gate_rubric.forward(None, None)
         l1_test_score = 0.0
-        if gate_score >= 0.75:  # At least 3/4 gates pass
+        if gate_score >= self.task_config.gate_threshold:
             l1_test_score = self.test_rubric.forward(None, None)
 
         l1_score = (
@@ -674,7 +685,14 @@ class FrontierSweEnvironment(MCPEnvironment):
     # Private helpers
 
     def _get_mcp_tool_definitions(self) -> list:
-        """Extract tool definitions from the shared pi_mcp server."""
+        """Extract tool definitions from the shared pi_mcp server.
+
+        We list tools from the module-level ``pi_mcp`` in ``app.py``
+        (the FastMCP instance actually served at ``/tools/mcp``),
+        because that is where pi-mcp-adapter connects.  The per-env
+        FastMCP created in ``__init__`` has the same tools but is
+        only used by the OpenEnv ``/mcp`` JSON-RPC endpoint.
+        """
         try:
             from fastmcp import Client
             from .app import pi_mcp

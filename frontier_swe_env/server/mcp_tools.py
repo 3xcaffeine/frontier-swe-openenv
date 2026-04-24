@@ -7,8 +7,20 @@
 """
 MCP tool definitions for the Frontier SWE Environment.
 
-Tools are registered on the environment's FastMCP instance inside
-FrontierSweEnvironment.__init__:
+These tools are registered on **two** FastMCP instances:
+
+1. The per-env instance (created in ``FrontierSweEnvironment.__init__``)
+   — used by the OpenEnv ``/mcp`` POST-only JSON-RPC endpoint.
+
+2. The module-level ``pi_mcp`` in ``app.py`` — served at ``/tools/mcp``
+   via Streamable HTTP (POST + GET/SSE) and is what pi-mcp-adapter
+   actually connects to.
+
+Both instances expose the same 4 tools but (2) delegates through the
+``_active_env`` global because the FastMCP instance is created before
+any environment exists.
+
+Tool contract (task-agnostic):
 - submit_plan(subtasks): Propose a subtask plan (PLANNING → EXECUTING)
 - submit_subtask(subtask_id): Submit current subtask for L1+L2 scoring
 - get_status(): Return episode status snapshot

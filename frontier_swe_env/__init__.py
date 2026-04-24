@@ -14,6 +14,7 @@ from .rubrics import (
     L2CodeReviewRubric,
     L3PlanReviewRubric,
     PGCompatTestRubric,
+    TestOutputRubric,
 )
 from .task_config import TaskConfig, pg_demo_config, pg_training_config
 
@@ -28,6 +29,7 @@ __all__ = [
     "L3PlanReviewRubric",
     "PGCompatTestRubric",
     "TaskConfig",
+    "TestOutputRubric",
     "pg_demo_config",
     "pg_training_config",
 ]
