@@ -82,6 +82,9 @@ class FrontierSweEnvironment(MCPEnvironment):
             output_pattern=self.task_config.l1_output_pattern,
             score_mode=self.task_config.l1_score_mode,
             reward_json_path=self.task_config.reward_json_path,
+            reward_json_score_field=self.task_config.reward_json_score_field,
+            reward_json_score_anchors=self.task_config.reward_json_score_anchors,
+            reward_json_score_higher_is_better=self.task_config.reward_json_score_higher_is_better,
             timeout_s=int(self.task_config.l1_timeout_s),
         )
 
@@ -593,6 +596,28 @@ class FrontierSweEnvironment(MCPEnvironment):
                     f"Verifier: status={reward.get('status')}, "
                     f"geom_mean_ratio={reward.get('geom_mean_ratio')}, "
                     f"reason={reward.get('reason')} | "
+                    f"L1 blended: {l1_score:.2f}"
+                )
+            else:
+                l1_summary = (
+                    f"Gate: {gate_score:.2f} | Verifier: no reward.json produced | "
+                    f"L1 blended: {l1_score:.2f}"
+                )
+        elif self.task_config.l1_score_mode == "reward_json_score":
+            reward = getattr(self.test_rubric, "last_reward", None)
+            if reward is not None:
+                additional = reward.get("additional_data") or {}
+                l1_extras = {
+                    "score": reward.get(self.task_config.reward_json_score_field),
+                    "subscores": reward.get("subscores"),
+                    "reason": additional.get("reason"),
+                    "total_time_ms": additional.get("total_time_ms"),
+                }
+                l1_summary = (
+                    f"Gate: {gate_score:.2f} | "
+                    f"Verifier: {self.task_config.reward_json_score_field}="
+                    f"{reward.get(self.task_config.reward_json_score_field)}, "
+                    f"reason={additional.get('reason')} | "
                     f"L1 blended: {l1_score:.2f}"
                 )
             else:

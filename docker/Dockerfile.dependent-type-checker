@@ -1,0 +1,102 @@
+# Dependent Type Checker — Task Image
+#
+# Extends openenv-base with the Rust toolchain, the vendored upstream
+# verifier (corpus + workloads + reference impl pre-extracted from the
+# tests-bundle), and a scaffolded /app/type-checker/ Cargo project for the
+# agent to edit.
+#
+# Build (must build base first):
+#   podman build -f docker/Dockerfile.base                       -t openenv-base:latest .
+#   podman build -f docker/Dockerfile.dependent-type-checker     -t frontier-swe-dependent-type-checker:latest .
+#
+# Run:
+#   podman run -p 8000:8000 frontier-swe-dependent-type-checker:latest
+
+ARG BASE_IMAGE=openenv-base:latest
+FROM ${BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TASK_BUDGET_SECS=3600
+ENV FSWE_TASK_NAME=type-checker
+ENV FSWE_TASK_MODE=training
+
+# Toolchain deps for cargo build (pkg-config and build-essential for
+# transitive C deps, ca-certificates for crates.io, xz-utils for tarballs).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    ca-certificates \
+    xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Rust stable via rustup (default profile, minimal toolchain to keep image
+# small but covers cargo + rustc).
+ENV CARGO_HOME=/root/.cargo
+ENV RUSTUP_HOME=/root/.rustup
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path \
+    && rustc --version && cargo --version
+
+# Workspace scaffold: copy upstream's `scaffold/` into /app/type-checker so
+# the agent starts inside a buildable Cargo project.
+RUN mkdir -p /app/type-checker/src
+COPY tasks/dependent-type-checker/environment/workspace/scaffold/Cargo.toml /app/type-checker/Cargo.toml
+COPY tasks/dependent-type-checker/environment/workspace/scaffold/.gitignore /app/type-checker/.gitignore
+COPY tasks/dependent-type-checker/environment/workspace/scaffold/src/main.rs /app/type-checker/src/main.rs
+
+# Examples and the agent-facing instruction.md.
+COPY tasks/dependent-type-checker/environment/workspace/examples/ /app/examples/
+COPY tasks/dependent-type-checker/environment/workspace/instruction.md /app/instruction.md
+
+# Verifier scripts + bundle live at /opt/verifier/.
+RUN mkdir -p /opt/verifier /logs/verifier
+COPY tasks/dependent-type-checker/tests/compute_reward.py /opt/verifier/
+COPY tasks/dependent-type-checker/tests/test.sh /opt/verifier/
+COPY tasks/dependent-type-checker/tests/tests-bundle.tar.gz /opt/verifier/tests-bundle.tar.gz
+RUN chmod +x /opt/verifier/test.sh
+
+# Pre-extract the bundle into /opt/verifier/ so test.sh's
+#   if [ -f tests-bundle.tar.gz ]; then tar xzf ...; fi
+# becomes a no-op on subsequent verifier runs (we delete the tarball).
+RUN tar xzf /opt/verifier/tests-bundle.tar.gz -C /opt/verifier/ \
+    && rm /opt/verifier/tests-bundle.tar.gz \
+    && ls /opt/verifier/
+
+# Pre-build the reference implementation so verifier doesn't recompile it
+# every run. Cost is borne once at image build.
+RUN cd /opt/verifier/reference_impl && cargo build --release \
+    && ls /opt/verifier/reference_impl/target/release/
+
+# Pre-build the scaffold once so cargo registry + transitive deps are warm.
+# Subsequent agent edits + verifier builds reuse these compiled artifacts.
+RUN cd /app/type-checker && cargo build --release \
+    && ls /app/type-checker/target/release/
+
+# Gate checks.
+COPY scripts/dtc_gate_checks.sh /app/gate_checks.sh
+RUN chmod +x /app/gate_checks.sh
+
+# OpenEnv core code (overwrites what's in the base so rubric changes land).
+COPY frontier_swe_env/ /opt/openenv/frontier_swe_env/
+COPY pyproject.toml /opt/openenv/pyproject.toml
+COPY scripts/ /opt/openenv/scripts/
+ENV PYTHONPATH="/opt/openenv"
+
+# Git baseline for L2 diff tracking. Init at /app/type-checker so diffs
+# scope to the agent's actual workspace.
+RUN cd /app/type-checker \
+    && git config --global user.email "agent@frontier-swe-openenv" \
+    && git config --global user.name "agent" \
+    && git init && git add -A && git commit -m "initial scaffold"
+
+# Patch PiHarnessAdapter: remove --no-session so pi persists session .jsonl files.
+RUN find /opt/openenv-venv -path '*/harnesses/adapters/pi.py' -exec \
+    sed -i '/if "--no-session" not in cmd:/,/cmd.append("--no-session")/d' {} \;
+
+# Re-copy entrypoint.
+COPY docker/openenv_entrypoint.sh /app/openenv_entrypoint.sh
+RUN chmod +x /app/openenv_entrypoint.sh
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1

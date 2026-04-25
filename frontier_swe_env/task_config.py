@@ -32,8 +32,13 @@ class TaskConfig(BaseModel):
     # the default 300s.
     l1_timeout_s: float = 300.0
     # Path to the structured reward.json written by the test command when
-    # l1_score_mode == "reward_json".
+    # l1_score_mode == "reward_json" or "reward_json_score".
     reward_json_path: str = "/logs/verifier/reward.json"
+    # reward_json_score mode config (used by tasks whose verifier writes a
+    # numeric score field directly, e.g. dependent-type-checker).
+    reward_json_score_field: str = "score"
+    reward_json_score_anchors: tuple[float, float] = (0.0, 1.0)
+    reward_json_score_higher_is_better: bool = True
     # Task context for L2/L3 rubric prompts
     task_description: str = ""
     task_domain: str = ""
@@ -43,7 +48,7 @@ class TaskConfig(BaseModel):
     l2_dimensions: list[dict] | None = None
     # L1 test output parsing
     l1_output_pattern: str = r"Total:\s*(\d+)/(\d+)\s*passed"
-    l1_score_mode: str = "ratio"  # "ratio" | "speedup" | "compression"
+    l1_score_mode: str = "ratio"  # "ratio" | "speedup" | "compression" | "reward_json" | "reward_json_score"
     # Gate threshold: minimum gate score before running L1 tests
     gate_threshold: float = 0.75
     # Scoring weights

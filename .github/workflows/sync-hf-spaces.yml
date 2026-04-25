@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        task: [notebook, postgres]
+        task: [notebook, postgres, type-checker]
     concurrency:
       group: sync-hf-space-${{ matrix.task }}
       cancel-in-progress: true
@@ -89,7 +89,7 @@ jobs:
               "FSWE_AGENT_API_URL": os.environ["FSWE_AGENT_API_URL"],
               "FSWE_GRADER_MODEL": os.environ["FSWE_GRADER_MODEL"],
               "FSWE_GRADER_API_URL": os.environ["FSWE_GRADER_API_URL"],
-              "FSWE_TASK_NAME": "notebook" if task == "notebook" else "postgres",
+              "FSWE_TASK_NAME": task,
               "FSWE_TASK_MODE": "training",
           }
           for k, v in variables.items():
