@@ -24,6 +24,7 @@ import argparse
 import inspect
 import json
 import logging
+import os
 import random
 from pathlib import Path
 from typing import Any
@@ -109,8 +110,23 @@ def _has_assistant_message(messages: list[dict]) -> bool:
 def _load_and_prepare_dataset(args: argparse.Namespace) -> Any:
     from datasets import load_dataset
 
-    logger.info("Loading HCAPO dataset from %s", args.dataset)
-    ds = load_dataset("json", data_files=args.dataset, split="train")
+    data_files = args.dataset
+    if args.dataset_id:
+        from huggingface_hub import hf_hub_download
+
+        logger.info(
+            "Downloading HCAPO dataset %s/%s",
+            args.dataset_id,
+            args.dataset_filename,
+        )
+        data_files = hf_hub_download(
+            repo_id=args.dataset_id,
+            repo_type="dataset",
+            filename=args.dataset_filename,
+        )
+
+    logger.info("Loading HCAPO dataset from %s", data_files)
+    ds = load_dataset("json", data_files=data_files, split="train")
     logger.info("Loaded %d raw rows", len(ds))
 
     if len(ds) == 0:
@@ -418,7 +434,7 @@ def _make_sft_config(
         "weight_decay": args.weight_decay,
         "bf16": args.bf16,
         "fp16": False,
-        "report_to": [],
+        "report_to": args.report_to,
         "remove_unused_columns": False,
     }
 
@@ -437,6 +453,9 @@ def _make_sft_config(
         kwargs["assistant_only_loss"] = False
     else:
         raise ValueError("Installed TRL SFTConfig does not support assistant_only_loss")
+
+    if "run_name" in params and args.run_name:
+        kwargs["run_name"] = args.run_name
 
     return sft_config_cls(**kwargs)
 
@@ -515,6 +534,8 @@ Examples:
     )
     p.add_argument("--config", default=None, help="JSON config file with CLI defaults")
     p.add_argument("--dataset", default="datasets/hcapo_train.jsonl")
+    p.add_argument("--dataset-id", default=None, help="HF dataset repo containing hcapo_train.jsonl")
+    p.add_argument("--dataset-filename", default="hcapo_train.jsonl")
     p.add_argument("--output-dir", default="outputs/hcapo")
     p.add_argument("--model-name", default="Qwen/Qwen3.5-4B")
     p.add_argument("--max-seq-length", type=int, default=16384)
@@ -523,6 +544,10 @@ Examples:
     p.add_argument("--seed", type=int, default=3407)
     p.add_argument("--num-proc", type=int, default=1)
     p.add_argument("--prepare-dataset-only", action="store_true")
+    p.add_argument("--report-to", nargs="+", default=[])
+    p.add_argument("--run-name", default=None)
+    p.add_argument("--trackio-space", default=None)
+    p.add_argument("--trackio-project", default=None)
 
     g = p.add_argument_group("LoRA")
     g.add_argument("--lora-r", type=int, default=32)
@@ -557,6 +582,9 @@ Examples:
     g = p.add_argument_group("Export")
     g.add_argument("--save-merged-16bit", action="store_true")
     g.add_argument("--merged-output-dir", default="outputs/hcapo_merged_16bit")
+    g.add_argument("--push-to-hub", action="store_true")
+    g.add_argument("--output-repo", default=None, help="HF model repo for adapter upload")
+    g.add_argument("--hub-private", action="store_true")
 
     return p
 
@@ -606,6 +634,10 @@ def main() -> None:
     _seed_everything(args.seed, torch)
     if args.config:
         logger.info("Config: %s", args.config)
+    if args.trackio_space:
+        os.environ["TRACKIO_SPACE_ID"] = args.trackio_space
+    if args.trackio_project:
+        os.environ["TRACKIO_PROJECT_NAME"] = args.trackio_project
 
     dataset = _load_and_prepare_dataset(args)
 
@@ -694,6 +726,25 @@ def main() -> None:
         logger.info("Saving merged 16-bit → %s", merged_dir)
         model.save_pretrained_merged(
             str(merged_dir), tokenizer, save_method="merged_16bit"
+        )
+
+    if args.push_to_hub:
+        if not args.output_repo:
+            raise ValueError("--push-to-hub requires --output-repo")
+        from huggingface_hub import HfApi, create_repo
+
+        logger.info("Uploading adapter output to https://huggingface.co/%s", args.output_repo)
+        create_repo(
+            args.output_repo,
+            repo_type="model",
+            private=args.hub_private,
+            exist_ok=True,
+        )
+        HfApi().upload_folder(
+            folder_path=str(output_dir),
+            repo_id=args.output_repo,
+            repo_type="model",
+            commit_message="Upload HCAPO adapter",
         )
 
     logger.info("Done")

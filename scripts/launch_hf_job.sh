@@ -2,16 +2,18 @@
 set -euo pipefail
 
 
-# launch_hf_job.sh — Upload DPO dataset & launch training on HF Jobs
+# launch_hf_job.sh — Launch HCAPO training on HF Jobs
 #
 # Prerequisites:
 #   1. `hf` CLI installed  (curl -LsSf https://hf.co/cli/install.sh | bash)
 #   2. HF_TOKEN set in .env or environment
-#   3. datasets/dpo_train.jsonl exists (from build_training_dataset.py)
+#   3. datasets/hcapo_train.jsonl exists if using --upload-dataset
 #
 # Usage:
-#   ./scripts/launch_hf_job.sh                  # defaults (a100-large, 16k ctx)
-#   ./scripts/launch_hf_job.sh --max-seq 32768  # 32k context
+#   ./scripts/launch_hf_job.sh                  # defaults (a100-large, Qwen 3.6 27B)
+#   ./scripts/launch_hf_job.sh --upload-dataset # upload dataset only
+#   ./scripts/launch_hf_job.sh --with-dataset-upload # upload dataset, then launch
+#   ./scripts/launch_hf_job.sh --with-dataset-upload --max-steps 1
 #   ./scripts/launch_hf_job.sh --dry-run        # print command without running
 
 
@@ -29,9 +31,15 @@ HF_USERNAME="${HF_USERNAME:-}"
 DATASET_REPO="${DATASET_REPO:-}"
 OUTPUT_REPO="${OUTPUT_REPO:-}"
 MODEL_NAME="${MODEL_NAME:-Qwen/Qwen3.6-27B}"
-MAX_SEQ="${MAX_SEQ:-16384}"
+HCAPO_CONFIG="${HCAPO_CONFIG:-training/hcapo_config_a100_q36_27b.json}"
 FLAVOR="${FLAVOR:-a100-large}"
 TIMEOUT="${TIMEOUT:-4h}"
+RUN_NAME="${RUN_NAME:-fswe-hcapo-pg-01-qwen36-27b}"
+MAX_STEPS="${MAX_STEPS:-}"
+DATASET_FILE="${DATASET_FILE:-$PROJECT_ROOT/datasets/hcapo_train.jsonl}"
+DATASET_FILENAME="${DATASET_FILENAME:-hcapo_train.jsonl}"
+UPLOAD_DATASET_ONLY=false
+WITH_DATASET_UPLOAD=false
 DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
@@ -40,9 +48,15 @@ while [[ $# -gt 0 ]]; do
         --dataset-repo) DATASET_REPO="$2"; shift 2 ;;
         --output-repo)  OUTPUT_REPO="$2";  shift 2 ;;
         --model)        MODEL_NAME="$2";   shift 2 ;;
-        --max-seq)      MAX_SEQ="$2";      shift 2 ;;
+        --config)       HCAPO_CONFIG="$2"; shift 2 ;;
         --flavor)       FLAVOR="$2";       shift 2 ;;
         --timeout)      TIMEOUT="$2";      shift 2 ;;
+        --run-name)     RUN_NAME="$2";     shift 2 ;;
+        --max-steps)    MAX_STEPS="$2";    shift 2 ;;
+        --dataset-file) DATASET_FILE="$2"; shift 2 ;;
+        --dataset-filename) DATASET_FILENAME="$2"; shift 2 ;;
+        --upload-dataset) UPLOAD_DATASET_ONLY=true; shift ;;
+        --with-dataset-upload) WITH_DATASET_UPLOAD=true; shift ;;
         --dry-run)      DRY_RUN=true;      shift   ;;
         *) echo "Unknown flag: $1"; exit 1 ;;
     esac
@@ -61,19 +75,17 @@ if [[ -z "$HF_USERNAME" ]]; then
     fi
 fi
 
-DATASET_REPO="${DATASET_REPO:-${HF_USERNAME}/frontier-swe-pg-task-001-dpo-trajectories}"
-OUTPUT_REPO="${OUTPUT_REPO:-${HF_USERNAME}/frontier-swe-dpo-qwen36-27b}"
-TRACKIO_SPACE="${TRACKIO_SPACE:-${HF_USERNAME}/frontier-swe-dpo-monitor}"
+DATASET_REPO="${DATASET_REPO:-${HF_USERNAME}/fswe-hcapo-pg-01-trajectories}"
+OUTPUT_REPO="${OUTPUT_REPO:-${HF_USERNAME}/fswe-hcapo-pg-01-qwen36-27b}"
+TRACKIO_SPACE="${TRACKIO_SPACE:-${HF_USERNAME}/fswe-hcapo-pg-01-monitor}"
 
-DATASET_FILE="$PROJECT_ROOT/datasets/dpo_train.jsonl"
+upload_dataset() {
+echo "==> Uploading HCAPO dataset to $DATASET_REPO ..."
 if [[ ! -f "$DATASET_FILE" ]]; then
     echo "ERROR: Dataset not found at $DATASET_FILE"
-    echo "Run 'python scripts/build_training_dataset.py' first."
+    echo "Run 'uv run python scripts/build_hcapo_dataset.py' first."
     exit 1
 fi
-
-# ---- Step 1: Upload dataset to HF Hub ----
-echo "==> Uploading dataset to $DATASET_REPO ..."
 if [[ "$DRY_RUN" == "false" ]]; then
     uv run python -c "
 from huggingface_hub import HfApi, create_repo
@@ -89,7 +101,7 @@ except Exception as e:
 
 api.upload_file(
     path_or_fileobj='${DATASET_FILE}',
-    path_in_repo='dpo_train.jsonl',
+    path_in_repo='${DATASET_FILENAME}',
     repo_id=repo_id,
     repo_type='dataset',
 )
@@ -97,6 +109,19 @@ print(f'Dataset uploaded to https://huggingface.co/datasets/{repo_id}')
 "
 else
     echo "  [DRY RUN] Would upload $DATASET_FILE -> $DATASET_REPO"
+fi
+}
+
+if [[ "$UPLOAD_DATASET_ONLY" == "true" ]]; then
+    upload_dataset
+    exit 0
+fi
+
+# ---- Step 1: Optionally upload dataset to HF Hub ----
+if [[ "$WITH_DATASET_UPLOAD" == "true" ]]; then
+    upload_dataset
+else
+    echo "==> Skipping dataset upload. Using existing dataset repo: $DATASET_REPO"
 fi
 
 # ---- Step 2: Submit HF Job ----
@@ -107,23 +132,35 @@ echo "    Model:    $MODEL_NAME"
 echo "    Dataset:  $DATASET_REPO"
 echo "    Output:   $OUTPUT_REPO"
 echo "    Trackio:  https://huggingface.co/spaces/$TRACKIO_SPACE"
-echo "    Max Seq:  $MAX_SEQ"
+echo "    Config:   $HCAPO_CONFIG"
+echo "    Run name: $RUN_NAME"
+echo "    Max steps: ${MAX_STEPS:-full run}"
 echo "    Timeout:  $TIMEOUT"
 echo ""
 
 JOB_CMD=(
-    hf jobs uv run "$SCRIPT_DIR/train_dpo_hfjob.py"
+    hf jobs uv run "$PROJECT_ROOT/training/train_hcapo.py"
     --flavor "$FLAVOR"
     --timeout "$TIMEOUT"
     --secrets HF_TOKEN
     --env "HF_ENDPOINT=https://hf-mirror.com"
     --
-    --dataset-id "$DATASET_REPO"
+    --config "$HCAPO_CONFIG"
     --model-name "$MODEL_NAME"
+    --dataset-id "$DATASET_REPO"
+    --dataset-filename "$DATASET_FILENAME"
     --output-repo "$OUTPUT_REPO"
-    --max-seq-length "$MAX_SEQ"
+    --report-to trackio
     --trackio-space "$TRACKIO_SPACE"
+    --trackio-project fswe-hcapo-pg-01
+    --run-name "$RUN_NAME"
+    --push-to-hub
+    --hub-private
 )
+
+if [[ -n "$MAX_STEPS" ]]; then
+    JOB_CMD+=(--max-steps "$MAX_STEPS")
+fi
 
 if [[ "$DRY_RUN" == "true" ]]; then
     echo "[DRY RUN] Would execute:"

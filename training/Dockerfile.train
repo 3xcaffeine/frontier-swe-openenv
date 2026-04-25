@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git curl build-essential && \
+        git curl build-essential bash && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
@@ -19,6 +19,8 @@ RUN mkdir -p /home/user/app && chown -R 1000:1000 /home/user
 ENV HOME=/home/user
 ENV PATH=/home/user/.local/bin:$PATH
 ENV UV_CACHE_DIR=/home/user/.cache/uv
+ENV HF_HOME=/home/user/.cache/huggingface
+ENV HCAPO_CONFIG=training/hcapo_config_a100_q36_27b.json
 
 WORKDIR /home/user/app
 
@@ -28,5 +30,6 @@ COPY --chown=1000 pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
 COPY --chown=1000 training/train_hcapo.py ./training/train_hcapo.py
+COPY --chown=1000 training/hcapo_config_*.json ./training/
 
-CMD ["uv", "run", "python", "training/train_hcapo.py"]
+CMD ["bash", "-lc", "cmd=(uv run python training/train_hcapo.py --config \"${HCAPO_CONFIG}\"); if [[ -n \"${MODEL_NAME:-}\" ]]; then cmd+=(--model-name \"${MODEL_NAME}\"); fi; if [[ -n \"${MAX_STEPS:-}\" ]]; then cmd+=(--max-steps \"${MAX_STEPS}\"); fi; if [[ -n \"${RUN_NAME:-}\" ]]; then cmd+=(--run-name \"${RUN_NAME}\"); fi; if [[ -n \"${REPORT_TO:-}\" ]]; then cmd+=(--report-to \"${REPORT_TO}\"); fi; if [[ -n \"${TRACKIO_SPACE_ID:-}\" ]]; then cmd+=(--trackio-space \"${TRACKIO_SPACE_ID}\"); fi; if [[ -n \"${TRACKIO_PROJECT_NAME:-}\" ]]; then cmd+=(--trackio-project \"${TRACKIO_PROJECT_NAME}\"); fi; if [[ -n \"${DATASET_ID:-}\" ]]; then cmd+=(--dataset-id \"${DATASET_ID}\" --dataset-filename \"${DATASET_FILENAME:-hcapo_train.jsonl}\"); fi; if [[ -n \"${OUTPUT_REPO:-}\" ]]; then cmd+=(--push-to-hub --output-repo \"${OUTPUT_REPO}\" --hub-private); fi; exec \"${cmd[@]}\""]
