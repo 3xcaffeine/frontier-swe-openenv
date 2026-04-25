@@ -118,9 +118,10 @@ class TestOutputRubric(Rubric):
     def _parse_reward_json_score(self) -> float:
         """Read reward.json and linearly normalize a numeric score field.
 
-        Hard-fail signal: ``additional_data.reason`` is set (the verifier
-        wrote a fail reason). In that case score is treated as 0.0 even if
-        the numeric field happens to be present.
+        Hard-fail signal: the verifier sets ``score == 0.0`` whenever any
+        gate fails. ``additional_data.reason`` is informational (narrates
+        success and failure alike), so we do not key off it. Normalization
+        produces 0.0 naturally when the input score is 0.0.
         """
         path = Path(self.reward_json_path)
         if not path.is_file():
@@ -133,10 +134,6 @@ class TestOutputRubric(Rubric):
             return 0.0
 
         self.last_reward = payload
-
-        additional = payload.get("additional_data") or {}
-        if additional.get("reason"):
-            return 0.0
 
         raw = payload.get(self.reward_json_score_field)
         if raw is None:

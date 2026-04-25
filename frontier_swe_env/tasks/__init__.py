@@ -56,3 +56,8 @@ from .notebook_compression import notebook_demo_config, notebook_training_config
 
 register_task("notebook", notebook_training_config, notebook_demo_config)
 register_task("notebook-compression", notebook_training_config, notebook_demo_config)
+
+from .dependent_type_checker import dtc_demo_config, dtc_training_config  # noqa: E402
+
+register_task("dependent-type-checker", dtc_training_config, dtc_demo_config)
+register_task("type-checker", dtc_training_config, dtc_demo_config)
