@@ -134,7 +134,6 @@ env_vars = {
     'MAX_SEQ_LENGTH': '${MAX_SEQ}',
     'TRACKIO_SPACE': '${TRACKIO_SPACE}',
     'RUN_NAME': '${RUN_NAME}',
-    'HF_ENDPOINT': 'https://hf-mirror.com',
 }
 for key, val in env_vars.items():
     api.add_space_variable(space_id, key, val)
