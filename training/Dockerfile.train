@@ -27,7 +27,7 @@ WORKDIR /home/user/app
 USER 1000
 
 COPY --chown=1000 pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra training
 
 COPY --chown=1000 training/train_hcapo.py ./training/train_hcapo.py
 COPY --chown=1000 training/hcapo_config_*.json ./training/
