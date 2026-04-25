@@ -5,19 +5,11 @@ description = "OpenEnv environment for FrontierSWE tasks"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "bitsandbytes>=0.49.2",
     "datasets",
     "fastapi[standard]>=0.136.0",
     "httpx>=0.28.1",
     "openai>=2.32.0",
     "openenv-core",
-    "torch>=2.10.0",
-    "torchvision",
-    "trackio>=0.25.0",
-    "transformers>=5",
-    "trl",
-    "unsloth",
-    "unsloth-zoo",
 ]
 
 [[tool.uv.index]]
@@ -26,6 +18,16 @@ name = "pytorch-cu128"
 explicit = true
 
 [project.optional-dependencies]
+training = [
+    "bitsandbytes>=0.49.2",
+    "trl",
+    "torch>=2.10.0",
+    "torchvision",
+    "transformers>=5",
+    "unsloth",
+    "unsloth-zoo",
+    "trackio>=0.25.0",
+]
 test = ["pytest>=8.0", "pytest-asyncio>=0.23", "requests"]
 
 [tool.uv.sources]

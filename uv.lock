@@ -647,12 +647,21 @@ name = "frontier-swe-openenv"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "bitsandbytes" },
     { name = "datasets" },
     { name = "fastapi", extra = ["standard"] },
     { name = "httpx" },
     { name = "openai" },
     { name = "openenv-core" },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "requests" },
+]
+training = [
+    { name = "bitsandbytes" },
     { name = "torch" },
     { name = "torchvision" },
     { name = "trackio" },
@@ -662,16 +671,9 @@ dependencies = [
     { name = "unsloth-zoo" },
 ]
 
-[package.optional-dependencies]
-test = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "requests" },
-]
-
 [package.metadata]
 requires-dist = [
-    { name = "bitsandbytes", specifier = ">=0.49.2" },
+    { name = "bitsandbytes", marker = "extra == 'training'", specifier = ">=0.49.2" },
     { name = "datasets" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.136.0" },
     { name = "httpx", specifier = ">=0.28.1" },
@@ -680,15 +682,15 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.23" },
     { name = "requests", marker = "extra == 'test'" },
-    { name = "torch", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torchvision", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "trackio", specifier = ">=0.25.0" },
-    { name = "transformers", specifier = ">=5" },
-    { name = "trl" },
-    { name = "unsloth", git = "https://github.com/unslothai/unsloth" },
-    { name = "unsloth-zoo", git = "https://github.com/unslothai/unsloth-zoo" },
+    { name = "torch", marker = "extra == 'training'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "torchvision", marker = "extra == 'training'", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "trackio", marker = "extra == 'training'", specifier = ">=0.25.0" },
+    { name = "transformers", marker = "extra == 'training'", specifier = ">=5" },
+    { name = "trl", marker = "extra == 'training'" },
+    { name = "unsloth", marker = "extra == 'training'", git = "https://github.com/unslothai/unsloth" },
+    { name = "unsloth-zoo", marker = "extra == 'training'", git = "https://github.com/unslothai/unsloth-zoo" },
 ]
-provides-extras = ["test"]
+provides-extras = ["training", "test"]
 
 [[package]]
 name = "frozenlist"
