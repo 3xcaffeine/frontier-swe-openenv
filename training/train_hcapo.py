@@ -15,7 +15,6 @@ Expected dataset format (produced by build_hcapo_dataset.py):
   }
 
 Usage:
-    uv run python scripts/train_hcapo.py --config training/hcapo_config.json
     uv run python scripts/train_hcapo.py --config training/hcapo_config.json --max-steps 1  # smoke test
 """
 
@@ -37,9 +36,8 @@ logging.basicConfig(
 logger = logging.getLogger("train_hcapo")
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
+
 
 def _seed_everything(seed: int, torch_module: Any) -> None:
     random.seed(seed)
@@ -91,9 +89,8 @@ def _normalize_messages(value: Any) -> list[dict[str, Any]]:
     return [_normalize_chat_message(m) for m in value if isinstance(m, dict)]
 
 
-# ---------------------------------------------------------------------------
 # Dataset preparation
-# ---------------------------------------------------------------------------
+
 
 def _normalize_hcapo_example(example: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -120,7 +117,13 @@ def _load_and_prepare_dataset(args: argparse.Namespace) -> Any:
         raise ValueError("Dataset is empty")
 
     ds = ds.map(_normalize_hcapo_example, num_proc=args.num_proc)
-    keep_cols = {"messages", "step_advantages", "step_message_indices", "reward", "episode_id"}
+    keep_cols = {
+        "messages",
+        "step_advantages",
+        "step_message_indices",
+        "reward",
+        "episode_id",
+    }
     drop_cols = [c for c in ds.column_names if c not in keep_cols]
     if drop_cols:
         ds = ds.remove_columns(drop_cols)
@@ -142,9 +145,8 @@ def _load_and_prepare_dataset(args: argparse.Namespace) -> Any:
     return ds
 
 
-# ---------------------------------------------------------------------------
 # Custom HCAPO Trainer + Data Collator
-# ---------------------------------------------------------------------------
+
 
 def _find_label_spans(labels: list[int]) -> list[tuple[int, int]]:
     """Find contiguous non-(-100) spans in labels.
@@ -173,7 +175,9 @@ def _build_hcapo_data_collator(
     sft_args: Any,
     data_collator_cls: type,
 ) -> Any:
-    pad_token = sft_args.pad_token or processing_class.pad_token or processing_class.eos_token
+    pad_token = (
+        sft_args.pad_token or processing_class.pad_token or processing_class.eos_token
+    )
     pad_token_id = processing_class.convert_tokens_to_ids(pad_token)
     if pad_token_id is None:
         raise ValueError(f"Pad token ({pad_token!r}) not in vocabulary")
@@ -224,7 +228,6 @@ def _build_hcapo_trainer_cls(sft_trainer_cls: type) -> type:
     """Build a Trainer subclass that weights loss by per-step HCAPO advantages."""
 
     class HCAPOTrainer(sft_trainer_cls):
-
         def compute_loss(
             self,
             model: Any,
@@ -313,7 +316,9 @@ def _ensure_generation_chat_template(processing_class: Any) -> None:
         None,
     )
     if end_idx is None:
-        raise RuntimeError("Could not locate assistant branch terminator in chat_template")
+        raise RuntimeError(
+            "Could not locate assistant branch terminator in chat_template"
+        )
 
     lines.insert(assistant_idx + 1, "        {% generation %}")
     lines.insert(end_idx + 2, "        {% endgeneration %}")
@@ -321,7 +326,9 @@ def _ensure_generation_chat_template(processing_class: Any) -> None:
     logger.info("Patched tokenizer chat_template with assistant generation markers")
 
 
-def _tokenize_hcapo_dataset(dataset: Any, processing_class: Any, args: argparse.Namespace) -> Any:
+def _tokenize_hcapo_dataset(
+    dataset: Any, processing_class: Any, args: argparse.Namespace
+) -> Any:
     """Pre-tokenize chat examples so Unsloth skips its formatting_func path.
 
     The current Unsloth SFTTrainer wrapper requires a formatting_func whenever
@@ -349,7 +356,9 @@ def _tokenize_hcapo_dataset(dataset: Any, processing_class: Any, args: argparse.
                 f"assistant_masks length mismatch: {len(assistant_masks)} vs {len(input_ids)} input_ids"
             )
         if 1 not in assistant_masks:
-            raise RuntimeError("Tokenized example has no assistant tokens within max_seq_length")
+            raise RuntimeError(
+                "Tokenized example has no assistant tokens within max_seq_length"
+            )
 
         return {
             "input_ids": input_ids,
@@ -367,12 +376,14 @@ def _tokenize_hcapo_dataset(dataset: Any, processing_class: Any, args: argparse.
     return tokenized
 
 
-# ---------------------------------------------------------------------------
 # Model + SFT config helpers
-# ---------------------------------------------------------------------------
+
 
 def _remove_qwen_vision_mappings() -> dict[str, str]:
-    from transformers.models.auto.modeling_auto import MODEL_FOR_VISION_2_SEQ_MAPPING_NAMES
+    from transformers.models.auto.modeling_auto import (
+        MODEL_FOR_VISION_2_SEQ_MAPPING_NAMES,
+    )
+
     popped: dict[str, str] = {}
     for key in list(MODEL_FOR_VISION_2_SEQ_MAPPING_NAMES.keys()):
         if "qwen" in key.lower():
@@ -381,11 +392,16 @@ def _remove_qwen_vision_mappings() -> dict[str, str]:
 
 
 def _restore_qwen_vision_mappings(popped: dict[str, str]) -> None:
-    from transformers.models.auto.modeling_auto import MODEL_FOR_VISION_2_SEQ_MAPPING_NAMES
+    from transformers.models.auto.modeling_auto import (
+        MODEL_FOR_VISION_2_SEQ_MAPPING_NAMES,
+    )
+
     MODEL_FOR_VISION_2_SEQ_MAPPING_NAMES.update(popped)
 
 
-def _make_sft_config(sft_config_cls: type, args: argparse.Namespace, output_dir: Path) -> Any:
+def _make_sft_config(
+    sft_config_cls: type, args: argparse.Namespace, output_dir: Path
+) -> Any:
     kwargs: dict[str, Any] = {
         "output_dir": str(output_dir),
         "learning_rate": args.learning_rate,
@@ -451,11 +467,17 @@ def _validate_tokenized_loss_masks(dataset: Any) -> None:
     column_names = set(getattr(dataset, "column_names", []) or [])
     if "assistant_masks" in column_names:
         total = len(dataset)
-        zero_rows = sum(1 for row in dataset if not any(row.get("assistant_masks") or []))
+        zero_rows = sum(
+            1 for row in dataset if not any(row.get("assistant_masks") or [])
+        )
         if zero_rows == total:
-            raise ValueError("All examples have empty assistant masks - nothing trainable")
+            raise ValueError(
+                "All examples have empty assistant masks - nothing trainable"
+            )
         if zero_rows:
-            logger.warning("%d/%d examples have empty assistant masks", zero_rows, total)
+            logger.warning(
+                "%d/%d examples have empty assistant masks", zero_rows, total
+            )
         else:
             logger.info("Validated: all %d examples have assistant masks", total)
         return
@@ -464,7 +486,9 @@ def _validate_tokenized_loss_masks(dataset: Any) -> None:
         logger.warning("No labels column to validate")
         return
     total = len(dataset)
-    zero_rows = sum(1 for row in dataset if not any(l != -100 for l in (row.get("labels") or [])))
+    zero_rows = sum(
+        1 for row in dataset if not any(l != -100 for l in (row.get("labels") or []))
+    )
     if zero_rows == total:
         raise ValueError("All examples have fully masked labels — nothing trainable")
     if zero_rows:
@@ -473,9 +497,8 @@ def _validate_tokenized_loss_masks(dataset: Any) -> None:
         logger.info("Validated: all %d examples have trainable tokens", total)
 
 
-# ---------------------------------------------------------------------------
 # CLI
-# ---------------------------------------------------------------------------
+
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -506,8 +529,17 @@ Examples:
     g.add_argument("--lora-alpha", type=int, default=32)
     g.add_argument("--lora-dropout", type=float, default=0.0)
     g.add_argument(
-        "--target-modules", nargs="+",
-        default=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        "--target-modules",
+        nargs="+",
+        default=[
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
     )
 
     g = p.add_argument_group("Optimisation")
@@ -549,9 +581,8 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-# ---------------------------------------------------------------------------
 # Main
-# ---------------------------------------------------------------------------
+
 
 def main() -> None:
     args = _parse_args()
@@ -611,7 +642,9 @@ def main() -> None:
 
     popped_vision = _remove_qwen_vision_mappings()
     if popped_vision:
-        logger.info("Removed vision mappings for text-only training: %s", list(popped_vision))
+        logger.info(
+            "Removed vision mappings for text-only training: %s", list(popped_vision)
+        )
 
     raw_tokenizer = getattr(tokenizer, "tokenizer", tokenizer)
     dataset = _tokenize_hcapo_dataset(dataset, raw_tokenizer, args)
@@ -647,15 +680,21 @@ def main() -> None:
     trainer.save_model(str(output_dir))
     raw_tokenizer.save_pretrained(str(output_dir))
 
-    (output_dir / "train_metrics.json").write_text(json.dumps(train_result.metrics, indent=2))
+    (output_dir / "train_metrics.json").write_text(
+        json.dumps(train_result.metrics, indent=2)
+    )
     (output_dir / "run_config.json").write_text(json.dumps(vars(args), indent=2))
-    (output_dir / "sft_config.json").write_text(json.dumps(sft_args.to_dict(), indent=2, default=str))
+    (output_dir / "sft_config.json").write_text(
+        json.dumps(sft_args.to_dict(), indent=2, default=str)
+    )
 
     if args.save_merged_16bit:
         merged_dir = Path(args.merged_output_dir)
         merged_dir.parent.mkdir(parents=True, exist_ok=True)
         logger.info("Saving merged 16-bit → %s", merged_dir)
-        model.save_pretrained_merged(str(merged_dir), tokenizer, save_method="merged_16bit")
+        model.save_pretrained_merged(
+            str(merged_dir), tokenizer, save_method="merged_16bit"
+        )
 
     logger.info("Done")
 

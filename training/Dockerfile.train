@@ -27,6 +27,6 @@ USER 1000
 COPY --chown=1000 pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
-COPY --chown=1000 scripts/train_dpo_hfjob.py ./scripts/train_dpo_hfjob.py
+COPY --chown=1000 training/train_hcapo.py ./training/train_hcapo.py
 
-CMD ["uv", "run", "python", "scripts/train_dpo_hfjob.py"]
+CMD ["uv", "run", "python", "training/train_hcapo.py"]
