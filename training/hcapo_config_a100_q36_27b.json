@@ -1,0 +1,21 @@
+{
+  "dataset": "datasets/hcapo_train.jsonl",
+  "output_dir": "outputs/fswe-hcapo-pg-01-qwen36-27b-a100",
+  "model_name": "Qwen/Qwen3.6-27B",
+  "bf16": true,
+  "load_in_4bit": false,
+  "max_seq_length": 16384,
+  "lora_r": 32,
+  "lora_alpha": 32,
+  "lora_dropout": 0.0,
+  "learning_rate": 5e-6,
+  "weight_decay": 0.01,
+  "num_train_epochs": 3.0,
+  "per_device_train_batch_size": 1,
+  "gradient_accumulation_steps": 4,
+  "warmup_steps": 2,
+  "logging_steps": 1,
+  "save_steps": 100,
+  "save_total_limit": 2,
+  "save_merged_16bit": false
+}
