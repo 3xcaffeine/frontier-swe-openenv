@@ -139,8 +139,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Not recommended due to higher quantization error."
         ),
     )
-    parser.add_argument("--bf16", action="store_true", help="Enable bf16 training")
-    parser.add_argument("--fp16", action="store_true", help="Enable fp16 training")
+    parser.add_argument("--bf16", action="store_true", help="Enable bf16 training (required)")
+    parser.add_argument(
+        "--fp16",
+        action="store_true",
+        help="Deprecated: fp16 is unsupported for this run and will error if set",
+    )
     parser.add_argument("--seed", type=int, default=3407, help="Random seed")
     parser.add_argument("--num-proc", type=int, default=1, help="Dataset map/filter workers")
 
@@ -210,12 +214,12 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
 
-    if args.bf16 and args.fp16:
-        raise ValueError("Choose only one of --bf16 or --fp16")
-    if not args.bf16 and not args.fp16:
-        args.bf16 = is_bfloat16_supported()
-        args.fp16 = not args.bf16
-        logger.info("Auto-detected precision: bf16=%s fp16=%s", args.bf16, args.fp16)
+    if args.fp16:
+        raise ValueError("fp16 is unsupported for this training job; bf16 is mandatory.")
+    if not is_bfloat16_supported():
+        raise ValueError("bf16 support is required; aborting because this runtime/GPU does not support bf16.")
+    args.bf16 = True
+    args.fp16 = False
 
     model_name_lower = args.model_name.lower()
     is_qwen36 = "qwen3.6" in model_name_lower or "qwen-3.6" in model_name_lower

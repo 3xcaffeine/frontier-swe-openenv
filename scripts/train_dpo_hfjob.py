@@ -148,6 +148,8 @@ def main() -> None:
 
     if not args.dataset_id:
         p.error("--dataset-id is required (or set DATASET_ID env var)")
+    if not is_bfloat16_supported():
+        raise ValueError("bf16 support is required; aborting because this runtime/GPU does not support bf16.")
 
     _seed_everything(args.seed)
 
@@ -200,8 +202,8 @@ def main() -> None:
         lr_scheduler_type="cosine",
         optim="adamw_8bit",
         weight_decay=0.01,
-        bf16=is_bfloat16_supported(),
-        fp16=not is_bfloat16_supported(),
+        bf16=True,
+        fp16=False,
         max_length=args.max_seq_length,
         max_prompt_length=max_prompt_length,
         beta=args.beta,
