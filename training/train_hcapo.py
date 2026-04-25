@@ -244,6 +244,55 @@ def _build_hcapo_trainer_cls(sft_trainer_cls: type) -> type:
     """Build a Trainer subclass that weights loss by per-step HCAPO advantages."""
 
     class HCAPOTrainer(sft_trainer_cls):
+
+        @staticmethod
+        def _get_backbone_and_lm_head(model: Any) -> tuple[Any, Any]:
+            """Resolve the transformer text backbone and lm_head.
+
+            Navigates through PeftModel → LoraModel → ForCausalLM /
+            ForConditionalGeneration wrappers. For multimodal Qwen3.5 models
+            (ForConditionalGeneration), extracts the text-only language_model
+            rather than the multimodal Qwen3_5Model backbone.
+            """
+            inner = model
+
+            # Step 1: PeftModel → LoraModel
+            if hasattr(inner, "base_model"):
+                inner = inner.base_model
+
+            # Step 2: LoraModel → ForCausalLM / ForConditionalGeneration
+            # LoraModel stores the base model in .model (set by BaseTuner).
+            # Its __getattr__ proxies attribute access, so inner.lm_head
+            # resolves to inner.model.lm_head.  We need to step through
+            # inner.model to reach the actual CausalLM.
+            if hasattr(inner, "model"):
+                candidate = inner.model
+                if hasattr(candidate, "model") and hasattr(candidate, "lm_head"):
+                    inner = candidate
+
+            if not (hasattr(inner, "model") and hasattr(inner, "lm_head")):
+                raise AttributeError(
+                    "Cannot locate backbone/lm_head. "
+                    f"Top-level type: {type(model).__name__}, "
+                    f"unwrapped type: {type(inner).__name__}"
+                )
+
+            backbone = inner.model
+            lm_head = inner.lm_head
+
+            # For multimodal models (Qwen3_5ForConditionalGeneration),
+            # backbone is Qwen3_5Model which wraps vision + text.
+            # Extract the text-only language_model (Qwen3_5TextModel).
+            if hasattr(backbone, "language_model"):
+                backbone = backbone.language_model
+
+            logger.debug(
+                "Resolved backbone=%s  lm_head=%s",
+                type(backbone).__name__,
+                type(lm_head).__name__,
+            )
+            return backbone, lm_head
+
         def compute_loss(
             self,
             model: Any,
@@ -260,45 +309,58 @@ def _build_hcapo_trainer_cls(sft_trainer_cls: type) -> type:
             if labels is None:
                 raise ValueError("HCAPO training requires labels")
 
-            outputs = model(**inputs)
-            logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
+            backbone, lm_head = self._get_backbone_and_lm_head(model)
 
-            shift_logits = logits[..., :-1, :]
-            shift_labels = labels[..., 1:].to(logits.device)
+            inputs["use_cache"] = False
+            backbone_out = backbone(**inputs)
+            hidden = (
+                backbone_out.last_hidden_state
+                if hasattr(backbone_out, "last_hidden_state")
+                else backbone_out[0]
+            )
+
+            if hidden.size(-1) != lm_head.in_features:
+                raise RuntimeError(
+                    f"Hidden dim ({hidden.size(-1)}) != lm_head.in_features "
+                    f"({lm_head.in_features}). backbone type: "
+                    f"{type(backbone).__name__}"
+                )
+
+            shift_hidden = hidden[:, :-1, :].contiguous()
+            del hidden, backbone_out
+            shift_labels = labels[:, 1:].to(shift_hidden.device)
             shift_weights = (
-                step_weights[..., 1:].to(logits.device)
+                step_weights[:, 1:].to(shift_hidden.device)
                 if step_weights is not None
                 else None
             )
 
-            # Qwen 3.6 has a large vocab; full 16k x vocab CE materializes a
-            # multi-GB workspace. Compute CE over sequence chunks to keep peak
-            # memory bounded while preserving the same token-weighted loss.
             chunk_size = 256
-            vocab_size = shift_logits.size(-1)
-            total_loss = torch.zeros((), device=logits.device, dtype=torch.float32)
-            denom = torch.zeros((), device=logits.device, dtype=torch.float32)
+            seq_len = shift_labels.size(1)
+            device = shift_hidden.device
+            total_loss = torch.zeros((), device=device, dtype=torch.float32)
+            denom = torch.zeros((), device=device, dtype=torch.float32)
 
-            for start in range(0, shift_labels.size(1), chunk_size):
-                end = min(start + chunk_size, shift_labels.size(1))
+            for start in range(0, seq_len, chunk_size):
+                end = min(start + chunk_size, seq_len)
                 chunk_labels = shift_labels[:, start:end]
                 label_mask = chunk_labels.ne(-100)
                 if not label_mask.any():
                     continue
 
-                chunk_logits = shift_logits[:, start:end, :]
+                chunk_logits = lm_head(shift_hidden[:, start:end, :])
                 chunk_loss = torch.nn.functional.cross_entropy(
-                    chunk_logits.reshape(-1, vocab_size),
+                    chunk_logits.reshape(-1, chunk_logits.size(-1)),
                     chunk_labels.reshape(-1),
                     reduction="none",
                     ignore_index=-100,
                 ).view_as(chunk_labels)
 
                 if shift_weights is not None:
-                    chunk_weights = shift_weights[:, start:end].to(chunk_loss.dtype)
-                    total_loss = total_loss + (chunk_loss * chunk_weights).sum()
+                    chunk_w = shift_weights[:, start:end].to(chunk_loss.dtype)
+                    total_loss = total_loss + (chunk_loss * chunk_w).sum()
                     denom = denom + (
-                        label_mask.to(chunk_loss.dtype) * chunk_weights
+                        label_mask.to(chunk_loss.dtype) * chunk_w
                     ).sum()
                 else:
                     total_loss = total_loss + chunk_loss.sum()
@@ -306,7 +368,7 @@ def _build_hcapo_trainer_cls(sft_trainer_cls: type) -> type:
 
             loss = total_loss / denom.clamp_min(1.0)
 
-            return (loss, outputs) if return_outputs else loss
+            return (loss, None) if return_outputs else loss
 
     return HCAPOTrainer
 

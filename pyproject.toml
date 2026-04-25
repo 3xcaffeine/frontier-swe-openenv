@@ -8,6 +8,7 @@ dependencies = [
     "datasets",
     "fastapi[standard]>=0.136.0",
     "httpx>=0.28.1",
+    "liger-kernel>=0.7.0",
     "openai>=2.32.0",
     "openenv-core",
 ]
