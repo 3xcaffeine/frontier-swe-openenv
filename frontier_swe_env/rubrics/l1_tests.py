@@ -1,11 +1,16 @@
 """L1b: Test output rubric — runs a test command and derives a score.
 
 Supports multiple score modes:
-- "ratio":       parse numerator/denominator (e.g. "Total: 6/72 passed")
-- "speedup":     parse speedup multiplier (e.g. "Speedup: 1.45x")
-- "compression": parse compression ratio from stdout (e.g. "Ratio: 0.312")
-- "reward_json": read a structured reward.json (status + geom_mean_ratio)
-                 produced by a Harbor-style verifier (notebook-compression).
+- "ratio":             parse numerator/denominator (e.g. "Total: 6/72 passed")
+- "speedup":           parse speedup multiplier (e.g. "Speedup: 1.45x")
+- "compression":       parse compression ratio from stdout (e.g. "Ratio: 0.312")
+- "reward_json":       read a structured reward.json (status + geom_mean_ratio)
+                       produced by a Harbor-style verifier (notebook-compression).
+- "reward_json_score": read a structured reward.json with a numeric "score"
+                       field (or configured field) and linearly normalize
+                       between configured anchors. Used by tasks whose
+                       upstream verifier emits a continuous score directly
+                       (e.g. dependent-type-checker).
 """
 
 from __future__ import annotations
@@ -40,6 +45,9 @@ class TestOutputRubric(Rubric):
         output_pattern: str = r"Total:\s*(\d+)/(\d+)\s*passed",
         score_mode: str = "ratio",
         reward_json_path: str = "/logs/verifier/reward.json",
+        reward_json_score_field: str = "score",
+        reward_json_score_anchors: tuple[float, float] = (0.0, 1.0),
+        reward_json_score_higher_is_better: bool = True,
         port: int = 0,
         host: str = "127.0.0.1",
         timeout_s: int = 300,
@@ -49,6 +57,9 @@ class TestOutputRubric(Rubric):
         self.output_pattern = output_pattern
         self.score_mode = score_mode
         self.reward_json_path = reward_json_path
+        self.reward_json_score_field = reward_json_score_field
+        self.reward_json_score_anchors = reward_json_score_anchors
+        self.reward_json_score_higher_is_better = reward_json_score_higher_is_better
         self.port = port
         self.host = host
         self.timeout_s = timeout_s
@@ -65,12 +76,14 @@ class TestOutputRubric(Rubric):
                 env=env,
             )
         except (subprocess.TimeoutExpired, FileNotFoundError):
-            if self.score_mode == "reward_json":
+            if self.score_mode in ("reward_json", "reward_json_score"):
                 self.last_reward = None
             return 0.0
 
         if self.score_mode == "reward_json":
             return self._parse_reward_json()
+        if self.score_mode == "reward_json_score":
+            return self._parse_reward_json_score()
         return self._parse_stdout(result.stdout)
 
     def _parse_reward_json(self) -> float:
@@ -101,6 +114,47 @@ class TestOutputRubric(Rubric):
         if span <= 0:
             return 0.0
         return max(0.0, min(1.0, (self.R_MAX - r) / span))
+
+    def _parse_reward_json_score(self) -> float:
+        """Read reward.json and linearly normalize a numeric score field.
+
+        Hard-fail signal: ``additional_data.reason`` is set (the verifier
+        wrote a fail reason). In that case score is treated as 0.0 even if
+        the numeric field happens to be present.
+        """
+        path = Path(self.reward_json_path)
+        if not path.is_file():
+            self.last_reward = None
+            return 0.0
+        try:
+            payload = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            self.last_reward = None
+            return 0.0
+
+        self.last_reward = payload
+
+        additional = payload.get("additional_data") or {}
+        if additional.get("reason"):
+            return 0.0
+
+        raw = payload.get(self.reward_json_score_field)
+        if raw is None:
+            return 0.0
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return 0.0
+
+        lo, hi = self.reward_json_score_anchors
+        span = hi - lo
+        if span <= 0:
+            return 0.0
+        if self.reward_json_score_higher_is_better:
+            normalized = (value - lo) / span
+        else:
+            normalized = (hi - value) / span
+        return max(0.0, min(1.0, normalized))
 
     def _parse_stdout(self, stdout: str) -> float:
         match = re.search(self.output_pattern, stdout)
