@@ -30,8 +30,8 @@ Make the binary handle argv[0] dispatch and respond to basic queries.
 
 You MUST follow this workflow — your code is only scored when you use these tools.
 
-**IMPORTANT: You have only 15 minutes. Break work into 3-5 small subtasks that
-you can each code, test, and submit within 2-3 minutes. Do NOT plan huge subtasks
+**IMPORTANT: You have 45 minutes. Break work into 3-5 small subtasks that
+you can each code, test, and submit within a few minutes. Do NOT plan huge subtasks
 that try to do everything at once. Submit early and often — even partial progress
 gets scored. A submitted imperfect subtask is worth infinitely more than an
 unsubmitted perfect one.**
@@ -76,7 +76,7 @@ unsubmitted perfect one.**
 
 5. **Check progress.** Call `get_status` to see phase, scores, remaining time.
 
-You have 15 minutes. Get as many pg_compat_test.sh tiers passing as possible.
+You have 45 minutes. Get as many pg_compat_test.sh tiers passing as possible.
 
 **Remember: submit_subtask early. An imperfect submission that gets feedback
 is better than running out of time with no submissions.**
@@ -95,7 +95,7 @@ def pg_training_config() -> TaskConfig:
         visible_test_total=72,
         max_subtasks=5,
         max_attempts_per_subtask=2,
-        episode_timeout_s=900,
+        episode_timeout_s=2700,
         per_turn_timeout_s=180,
         task_description="A PostgreSQL wire-compatible adapter written in Zig that translates PG protocol to SQLite",
         task_domain="systems programming",

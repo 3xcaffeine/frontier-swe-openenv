@@ -116,6 +116,11 @@ RUN cd /app/postgres-sqlite \
     && git config --global user.name "agent" \
     && git init && git add -A && git commit -m "initial stub"
 
+# Patch PiHarnessAdapter: remove --no-session so pi persists session .jsonl files.
+# Without this, pi runs in-memory-only mode and no trajectory data is saved.
+RUN find /opt/openenv-venv -path '*/harnesses/adapters/pi.py' -exec \
+    sed -i '/if "--no-session" not in cmd:/,/cmd.append("--no-session")/d' {} \;
+
 # Override entrypoint (generates models.json at runtime)
 COPY docker/openenv_entrypoint.sh /app/openenv_entrypoint.sh
 RUN chmod +x /app/openenv_entrypoint.sh

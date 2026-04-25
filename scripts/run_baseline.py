@@ -110,8 +110,8 @@ async def run_episode(
             turn += 1
             elapsed = time.time() - t0
 
-            # Check episode timeout (server-side is 900s)
-            if elapsed > 890:
+            # Check episode timeout (server-side is 2700s for training)
+            if elapsed > 2690:
                 logger.info("Approaching episode timeout, stopping.")
                 break
 
@@ -281,18 +281,38 @@ def _dump_container_logs(output_path: str) -> None:
             capture_output=True, text=True, timeout=5,
         )
         session_file = result.stdout.strip()
+        # Fallback: search in the workspace-specific session dir
+        if not session_file:
+            result = subprocess.run(
+                ["docker", "exec", "fswe-baseline", "bash", "-c",
+                 "find /root/.pi -name '*.jsonl' -type f 2>/dev/null | head -1"],
+                capture_output=True, text=True, timeout=5,
+            )
+            session_file = result.stdout.strip()
         if session_file:
             result = subprocess.run(
                 ["docker", "cp", f"fswe-baseline:{session_file}",
                  str(out_dir / "pi_session.jsonl")],
-                capture_output=True, timeout=10,
+                capture_output=True, timeout=30,
             )
             if result.returncode == 0:
-                logger.info("Pi session log copied to %s", out_dir / "pi_session.jsonl")
+                # Log file size for verification
+                pi_session_path = out_dir / "pi_session.jsonl"
+                if pi_session_path.exists():
+                    size_kb = pi_session_path.stat().st_size / 1024
+                    lines = pi_session_path.read_text().count("\n")
+                    logger.info("Pi session log copied to %s (%.1f KB, %d lines)",
+                               pi_session_path, size_kb, lines)
+                else:
+                    logger.info("Pi session log copied to %s", pi_session_path)
             else:
-                logger.warning("Failed to copy pi session log")
+                logger.warning("Failed to copy pi session log: %s",
+                              result.stderr[:200] if result.stderr else "unknown error")
         else:
-            logger.info("No pi session log found in container")
+            logger.warning(
+                "No pi session log found in container. "
+                "Check that pi is NOT launched with --no-session flag."
+            )
     except Exception as e:
         logger.warning("Failed to extract pi session log: %s", e)
 
