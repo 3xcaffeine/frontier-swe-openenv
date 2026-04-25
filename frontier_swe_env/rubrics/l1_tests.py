@@ -1,37 +1,45 @@
-"""L1b: Test output rubric — runs a test command and parses the score.
+"""L1b: Test output rubric — runs a test command and derives a score.
 
 Supports multiple score modes:
-- "ratio": parse numerator/denominator (e.g. "Total: 6/72 passed")
-- "speedup": parse speedup multiplier (e.g. "Speedup: 1.45x")
-- "compression": parse compression ratio (e.g. "Ratio: 0.312")
+- "ratio":       parse numerator/denominator (e.g. "Total: 6/72 passed")
+- "speedup":     parse speedup multiplier (e.g. "Speedup: 1.45x")
+- "compression": parse compression ratio from stdout (e.g. "Ratio: 0.312")
+- "reward_json": read a structured reward.json (status + geom_mean_ratio)
+                 produced by a Harbor-style verifier (notebook-compression).
 """
 
+from __future__ import annotations
+
+import json
 import os
 import re
 import subprocess
-from typing import Any
+from pathlib import Path
+from typing import Any, Optional
 
 from openenv.core.rubrics.base import Rubric
 
 
 class TestOutputRubric(Rubric):
-    """Run a test command and parse the output for a score.
+    """Run a test command and derive a score in [0, 1].
 
-    The ``output_pattern`` regex is matched against stdout.  How the
-    captured groups are interpreted depends on ``score_mode``:
-
-    - ``"ratio"``: two capture groups → ``int(g1) / int(g2)``
-    - ``"speedup"``: one capture group → ``min((float(g1) - 1.0) * 5, 1.0)``
-      (maps 1.0x→0, 1.2x→1.0; clamps at 1.0)
-    - ``"compression"``: one capture group → ``min((0.5 - float(g1)) / 0.5, 1.0)``
-      (maps 0.5→0, 0.0→1.0; clamps at [0, 1])
+    In ``reward_json`` mode the test command is run for its side-effect of
+    writing ``reward_json_path``; scoring comes from parsing that JSON.
+    The last parsed payload is cached on ``self.last_reward`` so callers
+    can surface per-notebook metadata in feedback.
     """
+
+    # reward_json normalization anchors: ratio at or above R_MAX → 0.0,
+    # ratio at or below R_MIN → 1.0, linear in between.
+    R_MAX = 1.0
+    R_MIN = 0.15
 
     def __init__(
         self,
         test_command: str = "bash /app/test.sh",
         output_pattern: str = r"Total:\s*(\d+)/(\d+)\s*passed",
         score_mode: str = "ratio",
+        reward_json_path: str = "/logs/verifier/reward.json",
         port: int = 0,
         host: str = "127.0.0.1",
         timeout_s: int = 300,
@@ -40,9 +48,11 @@ class TestOutputRubric(Rubric):
         self.test_command = test_command
         self.output_pattern = output_pattern
         self.score_mode = score_mode
+        self.reward_json_path = reward_json_path
         self.port = port
         self.host = host
         self.timeout_s = timeout_s
+        self.last_reward: Optional[dict] = None
 
     def forward(self, action: Any, observation: Any) -> float:
         env = {**os.environ, "PG_PORT": str(self.port), "PG_HOST": self.host}
@@ -55,28 +65,57 @@ class TestOutputRubric(Rubric):
                 env=env,
             )
         except (subprocess.TimeoutExpired, FileNotFoundError):
+            if self.score_mode == "reward_json":
+                self.last_reward = None
             return 0.0
 
-        return self._parse_output(result.stdout)
+        if self.score_mode == "reward_json":
+            return self._parse_reward_json()
+        return self._parse_stdout(result.stdout)
 
-    def _parse_output(self, stdout: str) -> float:
-        """Parse the test output according to the configured score mode."""
+    def _parse_reward_json(self) -> float:
+        path = Path(self.reward_json_path)
+        if not path.is_file():
+            self.last_reward = None
+            return 0.0
+        try:
+            payload = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            self.last_reward = None
+            return 0.0
+
+        self.last_reward = payload
+
+        if payload.get("status") != "ok":
+            return 0.0
+
+        ratio = payload.get("geom_mean_ratio")
+        if ratio is None:
+            return 0.0
+        try:
+            r = float(ratio)
+        except (TypeError, ValueError):
+            return 0.0
+
+        span = self.R_MAX - self.R_MIN
+        if span <= 0:
+            return 0.0
+        return max(0.0, min(1.0, (self.R_MAX - r) / span))
+
+    def _parse_stdout(self, stdout: str) -> float:
         match = re.search(self.output_pattern, stdout)
         if not match:
             return 0.0
-
         if self.score_mode == "ratio":
             return self._parse_ratio(match)
-        elif self.score_mode == "speedup":
+        if self.score_mode == "speedup":
             return self._parse_speedup(match)
-        elif self.score_mode == "compression":
+        if self.score_mode == "compression":
             return self._parse_compression(match)
-        else:
-            return self._parse_ratio(match)
+        return self._parse_ratio(match)
 
     @staticmethod
     def _parse_ratio(match: re.Match) -> float:
-        """Parse passed/total ratio."""
         try:
             passed = int(match.group(1))
             total = int(match.group(2))
@@ -88,10 +127,8 @@ class TestOutputRubric(Rubric):
 
     @staticmethod
     def _parse_speedup(match: re.Match) -> float:
-        """Parse speedup multiplier → normalized to [0, 1]."""
         try:
             speedup = float(match.group(1))
-            # 1.0x = no speedup = 0.0, 1.2x+ = 1.0
             return max(0.0, min((speedup - 1.0) * 5.0, 1.0))
         except (IndexError, ValueError):
             pass
@@ -99,10 +136,8 @@ class TestOutputRubric(Rubric):
 
     @staticmethod
     def _parse_compression(match: re.Match) -> float:
-        """Parse compression ratio → normalized to [0, 1]."""
         try:
             ratio = float(match.group(1))
-            # 0.5 = no compression = 0.0, 0.0 = perfect = 1.0
             return max(0.0, min((0.5 - ratio) / 0.5, 1.0))
         except (IndexError, ValueError):
             pass
