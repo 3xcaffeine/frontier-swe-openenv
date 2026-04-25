@@ -50,13 +50,55 @@ def _seed_everything(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
+def _normalize_tool_arguments(arguments: Any) -> dict[str, Any]:
+    if arguments is None:
+        return {"arguments": "{}"}
+    if isinstance(arguments, str):
+        text = arguments.strip()
+        if not text:
+            return {"arguments": "{}"}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {"arguments": arguments}
+        return {"arguments": json.dumps(parsed, ensure_ascii=False)}
+    return {"arguments": json.dumps(arguments, ensure_ascii=False)}
+
+
+def _normalize_chat_message(message: dict[str, Any]) -> dict[str, Any]:
+    """Make OpenAI-style tool calls compatible with tokenizer chat templates."""
+    normalized = dict(message)
+    tool_calls = normalized.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        return normalized
+
+    normalized_calls: list[Any] = []
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, dict):
+            normalized_calls.append(tool_call)
+            continue
+
+        call = dict(tool_call)
+        function = call.get("function")
+        if isinstance(function, dict):
+            fn = dict(function)
+            fn["arguments"] = _normalize_tool_arguments(fn.get("arguments"))
+            call["function"] = fn
+        elif "arguments" in call:
+            call["arguments"] = _normalize_tool_arguments(call.get("arguments"))
+        normalized_calls.append(call)
+
+    normalized["tool_calls"] = normalized_calls
+    return normalized
+
+
 def _normalize_dpo_field(value: Any) -> Any:
     """Keep conversational fields structured so TRL can apply chat templates."""
     if isinstance(value, str):
         return value
     if isinstance(value, list):
         if all(isinstance(item, dict) for item in value):
-            return value
+            return [_normalize_chat_message(item) for item in value]
         return "\n\n".join(str(item) for item in value)
     return str(value or "")
 

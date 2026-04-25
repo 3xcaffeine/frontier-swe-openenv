@@ -230,6 +230,7 @@ tests/
 trajectories*/
 
 .hf_cache/
+.hf_datasets_cache/
 outputs/
 
 unsloth_compiled_cache/

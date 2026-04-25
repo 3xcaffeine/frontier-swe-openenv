@@ -38,11 +38,25 @@ logger = logging.getLogger("build_dataset")
 # JSONL → conversation messages
 
 
-def _serialize_tool_arguments(args: Any) -> str:
-    """Serialize tool call arguments to a JSON string when possible."""
+def _normalize_tool_arguments(args: Any) -> dict[str, Any]:
+    """Normalize tool arguments to a stable mapping for tokenizer templates."""
+    if args is None:
+        return {"arguments": "{}"}
     if isinstance(args, str):
-        return args
-    return json.dumps(args if args is not None else {}, ensure_ascii=False)
+        text = args.strip()
+        if not text:
+            return {"arguments": "{}"}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {"arguments": args}
+        return {"arguments": json.dumps(parsed, ensure_ascii=False)}
+    return {"arguments": json.dumps(args, ensure_ascii=False)}
+
+
+def _serialize_tool_arguments(args: Any) -> str:
+    """Serialize tool arguments for text-only transcript rendering."""
+    return json.dumps(_normalize_tool_arguments(args), ensure_ascii=False)
 
 
 def _content_text(content: Any) -> str:
@@ -88,7 +102,7 @@ def _assistant_from_pi_message(msg: dict, include_thinking: bool) -> dict | None
                     "type": "function",
                     "function": {
                         "name": name,
-                        "arguments": _serialize_tool_arguments(args),
+                        "arguments": _normalize_tool_arguments(args),
                     },
                 }
             )
