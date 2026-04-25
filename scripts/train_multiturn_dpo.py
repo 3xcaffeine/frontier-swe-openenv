@@ -50,55 +50,31 @@ def _seed_everything(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-def _render_messages(messages: list[dict[str, Any]]) -> str:
-    """Render multi-turn messages into a stable plain-text transcript."""
-    lines: list[str] = []
-    for msg in messages:
-        role = msg.get("role", "")
-        content = msg.get("content", "")
-
-        if role == "user":
-            lines.append(f"<|user|>\n{content}".strip())
-        elif role == "assistant":
-            text = f"<|assistant|>\n{content}".strip()
-            lines.append(text)
-            tool_calls = msg.get("tool_calls", [])
-            if tool_calls:
-                lines.append(f"<|assistant_tool_calls|>\n{json.dumps(tool_calls, ensure_ascii=False)}")
-        elif role == "tool":
-            tool_name = msg.get("name", "tool")
-            tool_call_id = msg.get("tool_call_id", "")
-            prefix = f"<|tool:{tool_name}:{tool_call_id}|>" if tool_call_id else f"<|tool:{tool_name}|>"
-            lines.append(f"{prefix}\n{content}".strip())
-        else:
-            # Preserve unknown roles to avoid silent data loss.
-            lines.append(f"<|{role or 'unknown'}|>\n{content}".strip())
-
-    return "\n\n".join(lines).strip()
-
-
-def _normalize_text_field(value: Any) -> str:
-    """Normalize raw dataset field into plain text."""
+def _normalize_dpo_field(value: Any) -> Any:
+    """Keep conversational fields structured so TRL can apply chat templates."""
     if isinstance(value, str):
         return value
     if isinstance(value, list):
         if all(isinstance(item, dict) for item in value):
-            return _render_messages(value)
+            return value
         return "\n\n".join(str(item) for item in value)
     return str(value or "")
 
 
-def _to_dpo_text_columns(example: dict[str, Any]) -> dict[str, str]:
-    """Convert conversational DPO sample to text fields expected by DPOTrainer."""
-    prompt = _normalize_text_field(example.get("prompt"))
-    chosen = _normalize_text_field(example.get("chosen"))
-    rejected = _normalize_text_field(example.get("rejected"))
+def _has_nonempty_content(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return len(value) > 0
+    return bool(str(value or "").strip())
 
-    # Use temporary keys so we can deterministically replace original columns.
+
+def _normalize_dpo_example(example: dict[str, Any]) -> dict[str, Any]:
+    """Normalize prompt/chosen/rejected while preserving conversational schema."""
     return {
-        "__prompt_text": prompt,
-        "__chosen_text": chosen,
-        "__rejected_text": rejected,
+        "prompt": _normalize_dpo_field(example.get("prompt")),
+        "chosen": _normalize_dpo_field(example.get("chosen")),
+        "rejected": _normalize_dpo_field(example.get("rejected")),
     }
 
 
@@ -110,23 +86,16 @@ def _load_and_prepare_dataset(path: str, num_proc: int) -> Dataset:
     if len(ds) == 0:
         raise ValueError("Dataset is empty")
 
-    ds = ds.map(_to_dpo_text_columns, num_proc=num_proc)
-    keep_cols = {"__prompt_text", "__chosen_text", "__rejected_text"}
+    ds = ds.map(_normalize_dpo_example, num_proc=num_proc)
+    keep_cols = {"prompt", "chosen", "rejected"}
     drop_cols = [col for col in ds.column_names if col not in keep_cols]
     if drop_cols:
         ds = ds.remove_columns(drop_cols)
-    ds = ds.rename_columns(
-        {
-            "__prompt_text": "prompt",
-            "__chosen_text": "chosen",
-            "__rejected_text": "rejected",
-        }
-    )
     ds = ds.filter(
         lambda row: (
-            bool(_normalize_text_field(row.get("prompt")).strip())
-            and bool(_normalize_text_field(row.get("chosen")).strip())
-            and bool(_normalize_text_field(row.get("rejected")).strip())
+            _has_nonempty_content(row.get("prompt"))
+            and _has_nonempty_content(row.get("chosen"))
+            and _has_nonempty_content(row.get("rejected"))
         ),
         num_proc=num_proc,
     )

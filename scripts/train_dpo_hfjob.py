@@ -68,44 +68,29 @@ def _seed_everything(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-def _normalize_text_field(value: Any) -> str:
+def _normalize_dpo_field(value: Any) -> Any:
     if isinstance(value, str):
         return value
     if isinstance(value, list):
         if all(isinstance(item, dict) for item in value):
-            return _render_messages(value)
+            return value
         return "\n\n".join(str(item) for item in value)
     return str(value or "")
 
 
-def _render_messages(messages: list[dict[str, Any]]) -> str:
-    lines: list[str] = []
-    for msg in messages:
-        role = msg.get("role", "")
-        content = msg.get("content", "")
-        if role == "user":
-            lines.append(f"<|user|>\n{content}".strip())
-        elif role == "assistant":
-            text = f"<|assistant|>\n{content}".strip()
-            lines.append(text)
-            tool_calls = msg.get("tool_calls", [])
-            if tool_calls:
-                lines.append(f"<|assistant_tool_calls|>\n{json.dumps(tool_calls, ensure_ascii=False)}")
-        elif role == "tool":
-            tool_name = msg.get("name", "tool")
-            tool_call_id = msg.get("tool_call_id", "")
-            prefix = f"<|tool:{tool_name}:{tool_call_id}|>" if tool_call_id else f"<|tool:{tool_name}|>"
-            lines.append(f"{prefix}\n{content}".strip())
-        else:
-            lines.append(f"<|{role or 'unknown'}|>\n{content}".strip())
-    return "\n\n".join(lines).strip()
+def _has_nonempty_content(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return len(value) > 0
+    return bool(str(value or "").strip())
 
 
-def _to_dpo_text_columns(example: dict[str, Any]) -> dict[str, str]:
+def _normalize_dpo_example(example: dict[str, Any]) -> dict[str, Any]:
     return {
-        "__prompt_text": _normalize_text_field(example.get("prompt")),
-        "__chosen_text": _normalize_text_field(example.get("chosen")),
-        "__rejected_text": _normalize_text_field(example.get("rejected")),
+        "prompt": _normalize_dpo_field(example.get("prompt")),
+        "chosen": _normalize_dpo_field(example.get("chosen")),
+        "rejected": _normalize_dpo_field(example.get("rejected")),
     }
 
 
@@ -114,21 +99,16 @@ def _load_and_prepare_dataset(dataset_id: str, split: str = "train") -> Dataset:
     ds = load_dataset(dataset_id, split=split)
     logger.info("Loaded %d raw rows", len(ds))
 
-    ds = ds.map(_to_dpo_text_columns, num_proc=1)
-    keep = {"__prompt_text", "__chosen_text", "__rejected_text"}
+    ds = ds.map(_normalize_dpo_example, num_proc=1)
+    keep = {"prompt", "chosen", "rejected"}
     drop = [c for c in ds.column_names if c not in keep]
     if drop:
         ds = ds.remove_columns(drop)
-    ds = ds.rename_columns({
-        "__prompt_text": "prompt",
-        "__chosen_text": "chosen",
-        "__rejected_text": "rejected",
-    })
     ds = ds.filter(
         lambda row: (
-            bool(_normalize_text_field(row.get("prompt")).strip())
-            and bool(_normalize_text_field(row.get("chosen")).strip())
-            and bool(_normalize_text_field(row.get("rejected")).strip())
+            _has_nonempty_content(row.get("prompt"))
+            and _has_nonempty_content(row.get("chosen"))
+            and _has_nonempty_content(row.get("rejected"))
         ),
     )
     logger.info("Prepared %d rows after filtering", len(ds))
