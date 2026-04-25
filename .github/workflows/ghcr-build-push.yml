@@ -67,6 +67,8 @@ jobs:
             dockerfile: docker/Dockerfile.notebook
           - name: postgres
             dockerfile: docker/Dockerfile.pg
+          - name: dependent-type-checker
+            dockerfile: docker/Dockerfile.dependent-type-checker
     steps:
       - uses: actions/checkout@v4
         with:

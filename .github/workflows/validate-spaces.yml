@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        task: [notebook, postgres]
+        task: [notebook, postgres, type-checker]
     steps:
       - name: Poll Space /health
         env:

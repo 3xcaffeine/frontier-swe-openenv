@@ -15,7 +15,7 @@ import shutil
 import sys
 from pathlib import Path
 
-TASKS = ("notebook", "postgres")
+TASKS = ("notebook", "postgres", "type-checker")
 
 
 def prepare(task: str, out: Path, repo_root: Path) -> None:
