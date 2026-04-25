@@ -13,6 +13,9 @@
 # Run:
 #   podman run -p 8000:8000 frontier-swe-libexpat-to-x86asm:latest
 
+# Global build arg — declared before any FROM so all stages can reference it.
+ARG BASE_IMAGE=openenv-base:latest
+
 # ---------- Stage 1: package gcc into an encrypted bundle ----------
 FROM ubuntu:22.04 AS gcc-packager
 
@@ -21,22 +24,27 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /tmp/gcc-staging && \
+    ARCH_DIR=$(uname -m)-linux-gnu && \
     tar czfh /tmp/gcc-staging/gcc-bundle.tar.gz \
       /usr/bin/gcc /usr/bin/gcc-* \
-      /usr/bin/x86_64-linux-gnu-gcc* \
+      /usr/bin/${ARCH_DIR}-gcc* \
       /usr/bin/cc /usr/bin/cpp /usr/bin/cpp-* \
       /usr/lib/gcc/ /usr/libexec/gcc/ \
       /usr/bin/as \
-      /usr/lib/x86_64-linux-gnu/crt*.o \
-      /usr/lib/x86_64-linux-gnu/libc.so \
-      /usr/lib/x86_64-linux-gnu/libc_nonshared.a \
-      /usr/lib/x86_64-linux-gnu/libgcc_s.so* \
-      /usr/lib/x86_64-linux-gnu/libm.so* \
-      /usr/lib/x86_64-linux-gnu/libmvec.so* \
-      /usr/lib/x86_64-linux-gnu/libisl.so* \
-      /usr/lib/x86_64-linux-gnu/libmpc.so* \
-      /usr/lib/x86_64-linux-gnu/libmpfr.so* \
-      /usr/lib/x86_64-linux-gnu/libgmp.so* \
+      /usr/lib/${ARCH_DIR}/crt*.o \
+      /usr/lib/${ARCH_DIR}/libc.so \
+      /usr/lib/${ARCH_DIR}/libc_nonshared.a \
+      /usr/lib/${ARCH_DIR}/libgcc_s.so* \
+      /usr/lib/${ARCH_DIR}/libm.so* \
+      /usr/lib/${ARCH_DIR}/libmvec.so* \
+      /usr/lib/${ARCH_DIR}/libisl.so* \
+      /usr/lib/${ARCH_DIR}/libmpc.so* \
+      /usr/lib/${ARCH_DIR}/libmpfr.so* \
+      /usr/lib/${ARCH_DIR}/libgmp.so* \
+      /usr/lib/${ARCH_DIR}/libopcodes*.so* \
+      /usr/lib/${ARCH_DIR}/libbfd*.so* \
+      /usr/lib/${ARCH_DIR}/libctf*.so* \
+      /usr/lib/${ARCH_DIR}/libsframe*.so* \
       2>/dev/null; true
 
 RUN openssl enc -aes-256-cbc -pbkdf2 -pass "pass:a]9Kx#2vL!pQ7mZw@4rT&8jYc*0Wd6Fs" \
@@ -44,7 +52,6 @@ RUN openssl enc -aes-256-cbc -pbkdf2 -pass "pass:a]9Kx#2vL!pQ7mZw@4rT&8jYc*0Wd6F
       -out /tmp/gcc-staging/gcc-bundle.enc
 
 # ---------- Stage 2: final agent environment (NO gcc) ----------
-ARG BASE_IMAGE=openenv-base:latest
 FROM ${BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -79,22 +86,30 @@ RUN apt-get purge -y \
     apt-get autoremove -y && rm -rf /var/lib/apt/lists/* && \
     ldconfig
 
-# Encrypt the system libexpat.so.1* and remove the plaintext. Verifier
-# decrypts at score time so test infra can link against a known-good ref.
+# Produce the encrypted libexpat bundle the verifier expects. We keep the
+# plaintext libexpat.so.1 in place because the OpenEnv server's python3 is
+# dynamically linked against it — removing it bricks the image. Anti-cheat
+# still catches agents that link/dlopen libexpat (NEEDED-tag check, asm
+# source scan), so leaving the file present does not weaken scoring. The
+# verifier's Step 0a decrypts onto /, which becomes a benign overwrite.
 RUN LIBEXPAT_KEY="Xr7@mQ!9wPz3#kN5vBjL&2sYdT*0hFcA" && \
-    tar czfh /tmp/libexpat-bundle.tar.gz \
-      /lib/x86_64-linux-gnu/libexpat.so.1 \
-      /lib/x86_64-linux-gnu/libexpat.so.1.* 2>/dev/null && \
+    apt-get update && apt-get install -y --no-install-recommends libexpat1 && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /usr/lib/x86_64-linux-gnu && \
+    LIBEXPAT_FILES=$(find /lib /usr/lib -maxdepth 4 -name 'libexpat.so.1*' 2>/dev/null | tr '\n' ' ') && \
+    if [ -z "$LIBEXPAT_FILES" ]; then \
+        echo "ERROR: libexpat1 installed but no .so found"; exit 1; \
+    fi && \
+    tar czfh /tmp/libexpat-bundle.tar.gz $LIBEXPAT_FILES && \
     openssl enc -aes-256-cbc -pbkdf2 -pass "pass:$LIBEXPAT_KEY" \
       -in /tmp/libexpat-bundle.tar.gz \
       -out /usr/lib/x86_64-linux-gnu/.libexpat-bundle.enc && \
     rm -f /tmp/libexpat-bundle.tar.gz && \
-    rm -f /lib/x86_64-linux-gnu/libexpat.so.1* && \
-    rm -f /lib/x86_64-linux-gnu/libexpatw.so.1* \
-          /usr/lib/x86_64-linux-gnu/libexpatw.so.1* && \
     ldconfig
 
-# Stage the encrypted gcc bundle from Stage 1.
+# Stage the encrypted gcc bundle from Stage 1. Ensure the destination dir
+# exists (on aarch64 hosts /usr/lib/x86_64-linux-gnu/ may be absent).
+RUN mkdir -p /usr/lib/x86_64-linux-gnu
 COPY --from=gcc-packager /tmp/gcc-staging/gcc-bundle.enc \
      /usr/lib/x86_64-linux-gnu/.gcc-bundle.enc
 
