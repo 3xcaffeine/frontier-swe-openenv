@@ -227,10 +227,18 @@ pi-mono/
 
 # JSON/TXT files are ignored by default (logs, configs, local data),
 # but allow vendored task assets and tracked reference data.
-*.json
+*.json*
 *.txt
 !tasks/**/*.json
 !tasks/**/*.txt
 !notes/**/*.json
 !notes/**/*.txt
 notes/
+
+trajectories*/
+
+.hf_cache/
+.hf_datasets_cache/
+outputs/
+
+unsloth_compiled_cache/
