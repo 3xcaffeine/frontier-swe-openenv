@@ -189,7 +189,9 @@ env_vars = {
     'HCAPO_CONFIG': '${HCAPO_CONFIG}',
     'REPORT_TO': 'trackio',
     'TRACKIO_SPACE_ID': '${TRACKIO_SPACE}',
+    'TRACKIO_SPACE': '${TRACKIO_SPACE}',
     'TRACKIO_PROJECT_NAME': 'fswe-hcapo-pg-01',
+    'TRACKIO_PROJECT': 'fswe-hcapo-pg-01',
     'RUN_NAME': '${RUN_NAME}',
 }
 if '${MAX_STEPS}':

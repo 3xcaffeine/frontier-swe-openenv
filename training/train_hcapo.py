@@ -263,25 +263,48 @@ def _build_hcapo_trainer_cls(sft_trainer_cls: type) -> type:
             outputs = model(**inputs)
             logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
 
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
+            shift_logits = logits[..., :-1, :]
+            shift_labels = labels[..., 1:].to(logits.device)
+            shift_weights = (
+                step_weights[..., 1:].to(logits.device)
+                if step_weights is not None
+                else None
+            )
 
-            token_loss = torch.nn.functional.cross_entropy(
-                shift_logits.view(-1, shift_logits.size(-1)),
-                shift_labels.view(-1),
-                reduction="none",
-                ignore_index=-100,
-            ).view_as(shift_labels)
+            # Qwen 3.6 has a large vocab; full 16k x vocab CE materializes a
+            # multi-GB workspace. Compute CE over sequence chunks to keep peak
+            # memory bounded while preserving the same token-weighted loss.
+            chunk_size = 256
+            vocab_size = shift_logits.size(-1)
+            total_loss = torch.zeros((), device=logits.device, dtype=torch.float32)
+            denom = torch.zeros((), device=logits.device, dtype=torch.float32)
 
-            label_mask = shift_labels.ne(-100)
+            for start in range(0, shift_labels.size(1), chunk_size):
+                end = min(start + chunk_size, shift_labels.size(1))
+                chunk_labels = shift_labels[:, start:end]
+                label_mask = chunk_labels.ne(-100)
+                if not label_mask.any():
+                    continue
 
-            if step_weights is not None:
-                shift_weights = step_weights[..., 1:].contiguous()
-                weighted_loss = token_loss * shift_weights
-                denom = (label_mask.float() * shift_weights).sum().clamp_min(1.0)
-                loss = weighted_loss.sum() / denom
-            else:
-                loss = token_loss.sum() / label_mask.sum().clamp_min(1)
+                chunk_logits = shift_logits[:, start:end, :]
+                chunk_loss = torch.nn.functional.cross_entropy(
+                    chunk_logits.reshape(-1, vocab_size),
+                    chunk_labels.reshape(-1),
+                    reduction="none",
+                    ignore_index=-100,
+                ).view_as(chunk_labels)
+
+                if shift_weights is not None:
+                    chunk_weights = shift_weights[:, start:end].to(chunk_loss.dtype)
+                    total_loss = total_loss + (chunk_loss * chunk_weights).sum()
+                    denom = denom + (
+                        label_mask.to(chunk_loss.dtype) * chunk_weights
+                    ).sum()
+                else:
+                    total_loss = total_loss + chunk_loss.sum()
+                    denom = denom + label_mask.sum().to(total_loss.dtype)
+
+            loss = total_loss / denom.clamp_min(1.0)
 
             return (loss, outputs) if return_outputs else loss
 
@@ -636,8 +659,10 @@ def main() -> None:
         logger.info("Config: %s", args.config)
     if args.trackio_space:
         os.environ["TRACKIO_SPACE_ID"] = args.trackio_space
+        os.environ["TRACKIO_SPACE"] = args.trackio_space
     if args.trackio_project:
         os.environ["TRACKIO_PROJECT_NAME"] = args.trackio_project
+        os.environ["TRACKIO_PROJECT"] = args.trackio_project
 
     dataset = _load_and_prepare_dataset(args)
 
