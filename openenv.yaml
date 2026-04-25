@@ -1,0 +1,68 @@
+spec_version: 1
+name: frontier-swe-openenv
+type: package
+runtime: fastapi
+version: "0.1.0"
+
+description: >
+  Frontier SWE — OpenEnv. A family of long-horizon software-engineering
+  environments deployed as Hugging Face Spaces, sharing one OpenEnv-shaped
+  FastAPI server (Gym-style /reset, /step, /state plus FastMCP tools) and a
+  multi-layer rubric (gate checks, hidden-test verifier, LLM diff review,
+  LLM plan review) that produces a normalised [0, 1] reward. Each task
+  ships as its own GHCR image and is mirrored to a dedicated HF Space.
+
+repo: https://github.com/3xcaffeine/frontier-swe-openenv
+
+# Shared package primitives. Each task Space inherits these and overrides
+# the per-task subset in its own openenv.yaml.
+package:
+  app: frontier_swe_env.server.app:app
+  port: 8000
+  client: frontier_swe_env.client:FrontierSweEnv
+  base_classes:
+    server: openenv.core.env_server.create_app
+    client: openenv.core.EnvClient
+  api:
+    gym_style:
+      - POST /reset
+      - POST /step
+      - GET  /state
+      - GET  /health
+    mcp:
+      - POST /mcp        # OpenEnv POST-only JSON-RPC
+      - ANY  /tools/mcp  # FastMCP Streamable HTTP (POST + GET/SSE)
+  tools:
+    - submit_plan
+    - submit_subtask
+    - get_status
+    - advance
+  reserved_tool_names_avoided:
+    - reset
+    - step
+    - state
+    - close
+
+# Tasks bundled in this repo. Each entry points at its per-Space manifest
+# and the live HF Space URL; judges should pull the per-task openenv.yaml
+# from the Space they are evaluating.
+tasks:
+  - name: notebook-compression
+    manifest: spaces/notebook/openenv.yaml
+    hf_space: https://huggingface.co/spaces/rycerzes/frontier-swe-notebook
+    image: ghcr.io/3xcaffeine/frontier-swe-openenv/frontier-swe-notebook:latest
+    domain: systems / compression
+  - name: postgres-sqlite-wire-adapter
+    manifest: spaces/postgres/openenv.yaml
+    hf_space: https://huggingface.co/spaces/rycerzes/frontier-swe-postgres
+    image: ghcr.io/3xcaffeine/frontier-swe-openenv/frontier-swe-postgres:latest
+    domain: systems / databases / Zig
+  - name: dependent-type-checker
+    manifest: spaces/type-checker/openenv.yaml
+    hf_space: https://huggingface.co/spaces/rycerzes/frontier-swe-type-checker
+    image: ghcr.io/3xcaffeine/frontier-swe-openenv/frontier-swe-dependent-type-checker:latest
+    domain: programming languages / type theory
+
+# Default landing task for `openenv pull frontier-swe-openenv` style tooling
+# until per-task selection is wired through.
+default_task: dependent-type-checker
