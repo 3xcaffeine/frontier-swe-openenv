@@ -8,6 +8,7 @@ dependencies = [
     "bitsandbytes>=0.49.2",
     "datasets",
     "fastapi[standard]>=0.136.0",
+    "httpx>=0.28.1",
     "openai>=2.32.0",
     "openenv-core",
     "torch>=2.10.0",
