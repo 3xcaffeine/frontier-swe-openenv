@@ -1,22 +1,28 @@
 # /// script
+# requires-python = ">=3.13"
 # dependencies = [
 #     "unsloth",
 #     "unsloth_zoo",
-#     "trl>=0.22",
+#     "trl",
 #     "datasets",
-#     "torch",
-#     "bitsandbytes",
+#     "torch>=2.10.0",
+#     "bitsandbytes>=0.49.2",
 #     "accelerate",
 #     "peft",
+#     "transformers>=5",
 #     "huggingface_hub",
-#     "trackio",
+#     "trackio>=0.25.0",
 # ]
 # ///
-"""Self-contained multi-turn DPO training script for HF Jobs.
+"""Self-contained multi-turn DPO training script for HF Jobs / Spaces.
 
-Designed to run via:
+Designed to run via HF Jobs:
     hf jobs uv run scripts/train_dpo_hfjob.py --flavor a100-large --timeout 4h \
         --secrets HF_TOKEN --env HF_ENDPOINT=https://hf-mirror.com
+
+Or inside an HF Space Docker container where config is passed via env vars
+(DATASET_ID, MODEL_NAME, OUTPUT_REPO, MAX_SEQ_LENGTH, etc.).
+CLI args always override env vars.
 
 The script:
   1. Downloads the DPO dataset from a HF Hub dataset repo
@@ -129,29 +135,39 @@ def _load_and_prepare_dataset(dataset_id: str, split: str = "train") -> Dataset:
     return ds
 
 
+def _env(name: str, default: str | None = None) -> str | None:
+    """Read from environment, returning *default* if unset/empty."""
+    val = os.environ.get(name, "")
+    return val if val else default
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--dataset-id", required=True, help="HF Hub dataset repo (e.g. user/dpo-trajectories)")
-    p.add_argument("--dataset-split", default="train")
-    p.add_argument("--model-name", default="Qwen/Qwen3.6-27B")
-    p.add_argument("--output-repo", default=None, help="HF Hub repo to push adapter (e.g. user/dpo-qwen36-27b)")
-    p.add_argument("--output-dir", default="/tmp/dpo_output")
-    p.add_argument("--max-seq-length", type=int, default=16384)
+    p.add_argument("--dataset-id", default=_env("DATASET_ID"), help="HF Hub dataset repo")
+    p.add_argument("--dataset-split", default=_env("DATASET_SPLIT", "train"))
+    p.add_argument("--model-name", default=_env("MODEL_NAME", "Qwen/Qwen3.6-27B"))
+    p.add_argument("--output-repo", default=_env("OUTPUT_REPO"), help="HF Hub repo to push adapter")
+    p.add_argument("--output-dir", default=_env("OUTPUT_DIR", "/tmp/dpo_output"))
+    p.add_argument("--max-seq-length", type=int, default=int(_env("MAX_SEQ_LENGTH", "16384")))
     p.add_argument("--max-prompt-length", type=int, default=None)
-    p.add_argument("--lora-r", type=int, default=64)
-    p.add_argument("--lora-alpha", type=int, default=64)
-    p.add_argument("--beta", type=float, default=0.1)
-    p.add_argument("--learning-rate", type=float, default=5e-6)
-    p.add_argument("--num-train-epochs", type=float, default=1.0)
-    p.add_argument("--per-device-train-batch-size", type=int, default=1)
-    p.add_argument("--gradient-accumulation-steps", type=int, default=8)
-    p.add_argument("--warmup-steps", type=int, default=5)
-    p.add_argument("--logging-steps", type=int, default=1)
-    p.add_argument("--save-merged-16bit", action="store_true")
-    p.add_argument("--trackio-space", default=None, help="HF Space ID for Trackio dashboard (e.g. user/dpo-monitor)")
-    p.add_argument("--run-name", default="dpo-qwen36-27b", help="Trackio run name")
-    p.add_argument("--seed", type=int, default=3407)
+    p.add_argument("--lora-r", type=int, default=int(_env("LORA_R", "64")))
+    p.add_argument("--lora-alpha", type=int, default=int(_env("LORA_ALPHA", "64")))
+    p.add_argument("--beta", type=float, default=float(_env("BETA", "0.1")))
+    p.add_argument("--learning-rate", type=float, default=float(_env("LEARNING_RATE", "5e-6")))
+    p.add_argument("--num-train-epochs", type=float, default=float(_env("NUM_TRAIN_EPOCHS", "1.0")))
+    p.add_argument("--per-device-train-batch-size", type=int, default=int(_env("PER_DEVICE_TRAIN_BATCH_SIZE", "1")))
+    p.add_argument("--gradient-accumulation-steps", type=int, default=int(_env("GRADIENT_ACCUMULATION_STEPS", "8")))
+    p.add_argument("--warmup-steps", type=int, default=int(_env("WARMUP_STEPS", "5")))
+    p.add_argument("--logging-steps", type=int, default=int(_env("LOGGING_STEPS", "1")))
+    p.add_argument("--save-merged-16bit", action="store_true",
+                   default=_env("SAVE_MERGED_16BIT", "").lower() in ("1", "true"))
+    p.add_argument("--trackio-space", default=_env("TRACKIO_SPACE"), help="HF Space ID for Trackio dashboard")
+    p.add_argument("--run-name", default=_env("RUN_NAME", "dpo-qwen36-27b"), help="Trackio run name")
+    p.add_argument("--seed", type=int, default=int(_env("SEED", "3407")))
     args = p.parse_args()
+
+    if not args.dataset_id:
+        p.error("--dataset-id is required (or set DATASET_ID env var)")
 
     _seed_everything(args.seed)
 

@@ -1,0 +1,32 @@
+FROM nvidia/cuda:12.8.1-devel-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git curl build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+ENV UV_PYTHON=3.13
+RUN uv python install 3.13
+
+# HF Spaces runs containers as UID 1000.
+# Ensure home dir and app dir exist and are owned by UID 1000.
+RUN mkdir -p /home/user/app && chown -R 1000:1000 /home/user
+
+ENV HOME=/home/user
+ENV PATH=/home/user/.local/bin:$PATH
+ENV UV_CACHE_DIR=/home/user/.cache/uv
+
+WORKDIR /home/user/app
+
+USER 1000
+
+COPY --chown=1000 pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+
+COPY --chown=1000 scripts/train_dpo_hfjob.py ./scripts/train_dpo_hfjob.py
+
+CMD ["uv", "run", "python", "scripts/train_dpo_hfjob.py"]
