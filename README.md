@@ -208,13 +208,15 @@ CI assembles a minimal Space directory (root `Dockerfile`, `README.md`, `openenv
 
 A single Frontier SWE episode often runs on the order of **45 minutes to about 90 minutes**, depending on the task, verifier cost, and agent behaviour. That makes dense **online** RL on live environments impractical at scale, so this project uses **offline RL**: collect fixed trajectories, post-process rewards and hindsight signals, build a static training set, then fine-tune on Hugging Face with **Trackio** for metrics.
 
+For **why not GRPO/DPO alone**, **paper vs code** differences, and **equations** mapped to [`scripts/compute_hindsight_scores.py`](scripts/compute_hindsight_scores.py), [`scripts/build_hcapo_dataset.py`](scripts/build_hcapo_dataset.py), and [`training/train_hcapo.py`](training/train_hcapo.py), see [`training/README.md`](training/README.md).
+
 The walk-through below uses the **`postgres-sqlite-wire-adapter`** task as the reference pipeline.
 
 ### Data collection and post-processing
 
 1. **Rollouts** — [`scripts/collect_trajectories.py`](scripts/collect_trajectories.py) was used to gather **20 episodes** on a **2× NVIDIA A100** host running **sglang**, with the agent powered by **[`Qwen/Qwen3.6-27B`](https://huggingface.co/Qwen/Qwen3.6-27B)** (Qwen 3.6 27B). Run id **pg-01** labels this batch in tooling and dataset names.
 2. **Backfill** — Some episodes finished without a persisted **`episode_reward`** because of a server-side bug; [`scripts/backfill_rewards.py`](scripts/backfill_rewards.py) was run to fill those fields from episode metadata.
-3. **Hindsight** — [`scripts/compute_hindsight_scores.py`](scripts/compute_hindsight_scores.py) was run with the same **Qwen 3.6 27B** stack to attach per-step hindsight quantities (HCAPO-style) for training. How that differs from the original HCAPO formulation (paper [2603.08754](https://arxiv.org/abs/2603.08754)) will be written up in [`training/README.md`](training/README.md) once that document is added to the repo.
+3. **Hindsight** — [`scripts/compute_hindsight_scores.py`](scripts/compute_hindsight_scores.py) was run with the same **Qwen 3.6 27B** stack to attach per-step hindsight quantities (HCAPO-style) for training. For how that differs from the original HCAPO formulation (paper [2603.08754](https://arxiv.org/abs/2603.08754)), formulae, and design rationale, see [`training/README.md`](training/README.md).
 
 The **raw trajectory bundle** (per-episode `result.json`, `pi_session.jsonl`, `container_logs.txt`, optional `hindsight_scores.json`) is published on Hugging Face as **[`rycerzes/fswe-pg-01-traj-q36-27b`](https://huggingface.co/datasets/rycerzes/fswe-pg-01-traj-q36-27b)**.
 
