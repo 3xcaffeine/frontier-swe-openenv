@@ -1,0 +1,86 @@
+name: HF Spaces — Validate Inference
+
+# End-to-end smoke: open a WebSocket session to each deployed Space, run a
+# real episode through the pi harness (which calls our MCP tools internally),
+# and emit the hackathon-standard [START]/[STEP]/[END] log format.
+#
+# MANUAL TRIGGER ONLY. Each run costs ~$0.15-0.45 in HF Router tokens and
+# 3-10 min wall time per Space, so we do NOT chain this off main pushes.
+# Run via the Actions UI ("Run workflow") before submission to confirm the
+# full agent loop is working against the live Spaces.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tasks:
+        description: 'Comma-separated task slugs (notebook,postgres,type-checker,libexpat-to-x86asm)'
+        required: false
+        default: 'notebook,postgres,type-checker,libexpat-to-x86asm'
+
+permissions:
+  contents: read
+
+jobs:
+  inference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [notebook, postgres, type-checker, libexpat-to-x86asm]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Resolve Space URL
+        id: url
+        env:
+          HF_OWNER: ${{ vars.HF_OWNER }}
+          TASK: ${{ matrix.task }}
+        run: |
+          if [ -z "${HF_OWNER}" ]; then
+            echo "::error::HF_OWNER is empty. Configure repository variable HF_OWNER."
+            exit 1
+          fi
+          url="https://${HF_OWNER}-frontier-swe-${TASK}.hf.space"
+          echo "FSWE_SPACE_URL=${url}" >> "$GITHUB_ENV"
+          echo "Space URL: ${url}"
+
+      - name: Wait for Space /health
+        run: |
+          delay=10
+          max_total=300
+          elapsed=0
+          while [ "$elapsed" -lt "$max_total" ]; do
+            code=$(curl -sS -o /dev/null --max-time 15 -w '%{http_code}' "${FSWE_SPACE_URL}/health" || echo 000)
+            echo "probe ${FSWE_SPACE_URL}/health -> ${code} (elapsed ${elapsed}s)"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep "$delay"
+            elapsed=$((elapsed + delay))
+          done
+          echo "::error::Space ${FSWE_SPACE_URL} did not become healthy within ${max_total}s"
+          exit 1
+
+      - name: Run inference smoke
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          # Pi inside the Space holds its own agent + grader credentials via
+          # secrets propagated through sync-hf-spaces. Inference.py does not
+          # need to know them — it only drives /reset and /step over WS.
+          MAX_STEPS: "4"
+          TASK_COUNT: "1"
+          # Pi inside the Space runs an internal multi-turn LLM loop on each
+          # /step. Observed latency: 17s warm, up to 425s under HF Router
+          # cold-start. 900s gives ~2x headroom over the worst observed.
+          MESSAGE_TIMEOUT: "900"
+        run: |
+          uv run python inference.py
