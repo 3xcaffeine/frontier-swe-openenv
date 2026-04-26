@@ -1,0 +1,89 @@
+spec_version: 1
+name: frontier-swe-postgres
+type: space
+runtime: fastapi
+app: frontier_swe_env.server.app:app
+port: 8000
+version: "0.1.0"
+
+description: >
+  Frontier SWE — Postgres / SQLite Wire Adapter. An OpenEnv-shaped FastAPI
+  service hosting a multi-stage systems-programming task: build a PostgreSQL
+  wire-protocol-compatible server in Zig that uses SQLite as its storage
+  backend. Agents plan subtasks, edit Zig source in a Linux workspace, run
+  the gate + test suite, then submit for multi-layer rubric scoring.
+
+repo:
+  source: https://github.com/3xcaffeine/frontier-swe-openenv
+  task_directory: tasks/postgres-sqlite-wire-adapter
+
+environment:
+  task_name: postgres-sqlite-wire-adapter
+  workspace_dir: /app/postgres-sqlite
+  episode_timeout_s: 2700
+  max_attempts_per_subtask: 2
+  l1_score_mode: ratio
+  l1_output_pattern: 'Total:\s*(\d+)/(\d+)\s*passed'
+  task_domain: systems / databases / Zig
+  cpus: 8
+  memory_mb: 32768
+
+rubric:
+  type: composite
+  layers:
+    - name: gate_checks
+      kind: shell
+      script: /app/gate_checks.sh
+      output: GATE_SCORE=N/M (parsed by frontier_swe_env.rubrics.gate_checks)
+    - name: l1_tests
+      kind: regex_ratio
+      command: /app/test_runner.sh
+      pattern: 'Total:\s*(\d+)/(\d+)\s*passed'
+    - name: l2_code_review
+      kind: llm_judge
+      model_env: FSWE_GRADER_MODEL
+      api_url_env: FSWE_GRADER_API_URL
+      api_key_env: FSWE_GRADER_API_KEY
+      dimensions:
+        [completeness, correctness, robustness, forward_compatibility]
+    - name: l3_plan_review
+      kind: llm_judge
+      model_env: FSWE_GRADER_MODEL
+    - name: episode_aggregator
+      kind: weighted_blend
+      output_field: observation.episode_reward
+
+tools:
+  - name: submit_plan
+    description: Propose a subtask plan for the episode (PLANNING -> EXECUTING).
+    parameters:
+      - name: subtasks
+        type: list[dict]
+        required: true
+  - name: submit_subtask
+    description: Submit the current subtask for L1 + L2 scoring.
+    parameters:
+      - name: subtask_id
+        type: str
+        required: true
+  - name: get_status
+    description: Return the current episode status snapshot (phase, scores, time remaining).
+  - name: advance
+    description: Freeze the current subtask score and advance to the next subtask.
+
+metrics:
+  observation:
+    - observation.phase
+    - observation.current_subtask
+    - observation.frozen_scores
+    - observation.time_remaining_s
+    - observation.plan_score
+    - observation.subtask_feedback
+    - observation.episode_reward
+  reward:
+    - reward.gate_score
+    - reward.l1_test_score
+    - reward.l1_blended
+    - reward.l2_code_review
+    - reward.l3_plan_review
+    - reward.episode_reward

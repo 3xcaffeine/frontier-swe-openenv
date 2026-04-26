@@ -1,0 +1,99 @@
+spec_version: 1
+name: frontier-swe-notebook
+type: space
+runtime: fastapi
+app: frontier_swe_env.server.app:app
+port: 8000
+version: "0.1.0"
+
+description: >
+  Frontier SWE — Notebook Compression. An OpenEnv-shaped FastAPI service that
+  hosts a long-horizon software engineering task: build a fit/compress/decompress
+  pipeline for Jupyter notebooks. Agents plan subtasks, edit code in a Linux
+  workspace, then submit for multi-layer rubric scoring (gate checks, hidden
+  test verifier, LLM diff review, LLM plan review). The verifier writes a
+  structured reward.json the rubric layer normalises into a [0, 1] reward.
+
+repo:
+  source: https://github.com/3xcaffeine/frontier-swe-openenv
+  task_directory: tasks/notebook-compression
+
+# Task-level defaults (overridable via FSWE_TASK_MODE=demo|training and env vars).
+environment:
+  task_name: notebook-compression
+  workspace_dir: /app
+  build_command: ""
+  episode_timeout_s: 3600
+  max_attempts_per_subtask: 2
+  l1_score_mode: reward_json
+  reward_json_path: /logs/verifier/reward.json
+  task_domain: systems / compression
+  cpus: 8
+  memory_mb: 32768
+
+# Composite multi-layer rubric. Final episode reward is a weighted blend of
+# all layers, normalised to [0, 1].
+rubric:
+  type: composite
+  layers:
+    - name: gate_checks
+      kind: shell
+      script: /app/gate_checks.sh
+      output: GATE_SCORE=N/M (parsed by frontier_swe_env.rubrics.gate_checks)
+    - name: l1_tests
+      kind: structured_reward
+      score_mode: reward_json
+      reward_json_path: /logs/verifier/reward.json
+    - name: l2_code_review
+      kind: llm_judge
+      model_env: FSWE_GRADER_MODEL
+      api_url_env: FSWE_GRADER_API_URL
+      api_key_env: FSWE_GRADER_API_KEY
+      dimensions:
+        [completeness, correctness, robustness, forward_compatibility]
+    - name: l3_plan_review
+      kind: llm_judge
+      model_env: FSWE_GRADER_MODEL
+      api_url_env: FSWE_GRADER_API_URL
+      api_key_env: FSWE_GRADER_API_KEY
+    - name: episode_aggregator
+      kind: weighted_blend
+      output_field: observation.episode_reward
+
+# MCP tools exposed by this environment. None of these collide with OpenEnv's
+# reserved tool names (reset, step, state, close).
+tools:
+  - name: submit_plan
+    description: Propose a subtask plan for the episode (PLANNING -> EXECUTING).
+    parameters:
+      - name: subtasks
+        type: list[dict]
+        required: true
+  - name: submit_subtask
+    description: Submit the current subtask for L1 + L2 scoring.
+    parameters:
+      - name: subtask_id
+        type: str
+        required: true
+  - name: get_status
+    description: Return the current episode status snapshot (phase, scores, time remaining).
+  - name: advance
+    description: Freeze the current subtask score and advance to the next subtask.
+
+# Observation fields surfaced to the agent on every /step response.
+metrics:
+  observation:
+    - observation.phase
+    - observation.current_subtask
+    - observation.frozen_scores
+    - observation.time_remaining_s
+    - observation.plan_score
+    - observation.subtask_feedback
+    - observation.episode_reward
+  reward:
+    - reward.gate_score
+    - reward.l1_test_score
+    - reward.l1_blended
+    - reward.l2_code_review
+    - reward.l3_plan_review
+    - reward.episode_reward
