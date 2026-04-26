@@ -241,6 +241,7 @@ pi-mono/
 notes/
 
 trajectories*/
+artifacts/
 
 .hf_cache/
 .hf_datasets_cache/
