@@ -220,6 +220,7 @@ __marimo__/
 OpenEnv/
 frontier-swe/
 pi-mono/
+/SkyRL/
 
 # Top-level only — do NOT match nested directories like tasks/*/tests/
 /docs/
