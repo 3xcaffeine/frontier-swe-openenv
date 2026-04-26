@@ -3,19 +3,37 @@ name = "frontier-swe-openenv"
 version = "0.1.0"
 description = "OpenEnv environment for FrontierSWE tasks"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
+    "datasets",
     "fastapi[standard]>=0.136.0",
+    "httpx>=0.28.1",
+    "liger-kernel>=0.7.0",
     "openai>=2.32.0",
     "openenv-core",
 ]
 
+[[tool.uv.index]]
+url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu128"
+explicit = true
+
 [project.optional-dependencies]
-test = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
-    "requests",
+training = [
+    "bitsandbytes>=0.49.2",
+    "trl",
+    "torch>=2.10.0",
+    "torchvision",
+    "transformers>=5",
+    "unsloth",
+    "unsloth-zoo",
+    "trackio>=0.25.0",
 ]
+test = ["pytest>=8.0", "pytest-asyncio>=0.23", "requests"]
 
 [tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
 openenv-core = { git = "https://github.com/rycerzes/OpenEnv", rev = "ff48ff3097ed38f616d380ba49c0eb4a198d603f" }
+unsloth_zoo = { git = "https://github.com/unslothai/unsloth-zoo" }
+unsloth = { git = "https://github.com/unslothai/unsloth" }
