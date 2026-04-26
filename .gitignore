@@ -231,6 +231,10 @@ pi-mono/
 *.txt
 !tasks/**/*.json
 !tasks/**/*.txt
+# Vendored task content (libexpat ships expat-src/lib/ which collides with the
+# generic lib/ rule used for Python build dirs).
+!tasks/**/environment/expat-src/lib/
+!tasks/**/environment/expat-src/lib/**
 !notes/**/*.json
 !notes/**/*.txt
 notes/

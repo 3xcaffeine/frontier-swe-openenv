@@ -69,6 +69,8 @@ jobs:
             dockerfile: docker/Dockerfile.pg
           - name: dependent-type-checker
             dockerfile: docker/Dockerfile.dependent-type-checker
+          - name: libexpat-to-x86asm
+            dockerfile: docker/Dockerfile.libexpat-to-x86asm
     steps:
       - uses: actions/checkout@v4
         with:
