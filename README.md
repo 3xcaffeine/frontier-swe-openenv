@@ -11,8 +11,39 @@ These environments are **adapted from the [FrontierSWE](https://www.frontierswe.
 - **Shared runtime**: One FastMCP/OpenEnv stack per image; task-specific workspace, verifier, and instructions are baked into the image.
 - **Gym-style control**: `POST /reset`, `POST /step`, `GET /state`, `GET /health` for training and evaluation harnesses.
 - **MCP for agents**: OpenEnv JSON-RPC at `POST /mcp`, and Streamable HTTP for adapters at `/tools/mcp` (POST and GET/SSE).
+- **Custom harness adapter stack**: Built on OpenEnv harness RFC005 and PR #389, then forked and extended for `pi` integration in [`rycerzes/OpenEnv` `feature/pi-harness-adapter`](https://github.com/rycerzes/OpenEnv/commits/feature/pi-harness-adapter/).
 - **Episode tools**: `submit_plan`, `submit_subtask`, `get_status`, `advance` (see `openenv.yaml` and each Space manifest).
 - **Multi-layer scoring**: Gate scripts, L1 (tests, `reward.json`, or regex ratio), L2/L3 LLM judges when grader API env vars are set, then a weighted episode blend.
+
+## Harness adapter lineage (RFC005 + pi)
+
+This project does not treat the coding agent as just another external HTTP caller. Instead, the agent runs as a harness process inside the task container, and OpenEnv drives that process turn-by-turn.
+
+The adapter path used here is:
+
+1. **RFC005 (OpenEnv harness RFC)** - Defines the harness architecture and contracts: typed harness config/events/actions, adapter lifecycle (`start`/`stop`/`send_message`), transport modes (stdio, Streamable HTTP, MCP), and multi-turn `reset`/`step` semantics via `HarnessEnvironment`.
+2. **OpenEnv PR #389** - Implements the RFC005 foundation and harness environment flow (including adapter abstractions and concrete adapter work) that this repo builds on: [meta-pytorch/OpenEnv#389](https://github.com/meta-pytorch/OpenEnv/pull/389).
+3. **Fork + updates for `pi`** - We forked and extended that line in [`rycerzes/OpenEnv` `feature/pi-harness-adapter`](https://github.com/rycerzes/OpenEnv/commits/feature/pi-harness-adapter/) to run `pi` robustly in long-horizon SWE episodes (for example dedicated harness event loop ownership, larger subprocess output buffering, and container integration tests).
+
+### Why `pi`
+
+We chose `pi` because the `pi-mono/coding-agent` loop is the most minimal agent loop we have seen in practice (only a small number of core files), which keeps the harness surface area easy to reason about.
+
+In our Frontier SWE runs, that simplicity has translated into practical wins:
+
+- **Token efficiency**: best token economics among the harnesses we tested, including high prompt-cache hit rates and low tokens per session.
+- **Operational simplicity**: the smallest control loop to integrate and debug.
+- **Reliability**: fewer moving parts have produced the lowest harness-level bug rate in our sessions.
+
+### What each piece does in practice
+
+| Piece | What it does in this repo |
+| --- | --- |
+| **RFC005 harness model** | Gives us a standard way to represent harness turns as structured events, keep multi-turn trajectory, and plug different coding agents behind one OpenEnv-shaped API. |
+| **`PiHarnessAdapter`** | Starts/stops the `pi` subprocess in the workspace, injects available MCP tools, sends each agent turn, and returns structured harness events back to the environment. |
+| **`/tools/mcp` Streamable endpoint** | Serves FastMCP with POST + GET/SSE so the adapter can maintain tool-calling transport expected by `pi`; this is why we expose `/tools/mcp` in addition to OpenEnv's `POST /mcp`. |
+| **`FrontierSweEnvironment` orchestration** | Owns episode lifecycle (planning/executing/done), calls the adapter per step, and combines gate/L1/L2/L3 outputs into the episode reward. |
+| **Entrypoint model wiring** | `docker/openenv_entrypoint.sh` can generate `/root/.pi/agent/models.json` from `FSWE_AGENT_*` env vars so `pi` targets your OpenAI-compatible endpoint/model without image rebuilds. |
 
 ## Tasks
 
