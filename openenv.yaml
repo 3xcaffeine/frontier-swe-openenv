@@ -62,6 +62,11 @@ tasks:
     hf_space: https://huggingface.co/spaces/rycerzes/frontier-swe-type-checker
     image: ghcr.io/3xcaffeine/frontier-swe-openenv/frontier-swe-dependent-type-checker:latest
     domain: programming languages / type theory
+  - name: libexpat-to-x86asm
+    manifest: spaces/libexpat-to-x86asm/openenv.yaml
+    hf_space: https://huggingface.co/spaces/rycerzes/frontier-swe-libexpat-to-x86asm
+    image: ghcr.io/3xcaffeine/frontier-swe-openenv/frontier-swe-libexpat-to-x86asm:latest
+    domain: systems programming / x86-64 assembly / XML
 
 # Default landing task for `openenv pull frontier-swe-openenv` style tooling
 # until per-task selection is wired through.
