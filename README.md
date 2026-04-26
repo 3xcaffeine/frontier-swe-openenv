@@ -119,10 +119,14 @@ Agents produce **`/app/asm-port/libexpat.so`** implementing the **libexpat C ABI
 uv sync
 ```
 
-Optional test extras:
+Optional extras:
 
 ```bash
 uv sync --extra test
+```
+For training on local
+```bash
+uv sync --extra training
 ```
 
 ### Run the API locally (development)
@@ -199,6 +203,58 @@ Exact behaviour is defined per task in each Space `openenv.yaml` under `rubric.l
 ## Hugging Face Spaces
 
 CI assembles a minimal Space directory (root `Dockerfile`, `README.md`, `openenv.yaml`) from `spaces/<task>/` via [`scripts/prepare_hf_space.py`](scripts/prepare_hf_space.py). The **HF — Sync** workflow pushes to `spaces/{HF_OWNER}/frontier-swe-{notebook|postgres|type-checker|libexpat-to-x86asm}` after images build on `main`.
+
+## Training (offline RL)
+
+A single Frontier SWE episode often runs on the order of **45 minutes to about 90 minutes**, depending on the task, verifier cost, and agent behaviour. That makes dense **online** RL on live environments impractical at scale, so this project uses **offline RL**: collect fixed trajectories, post-process rewards and hindsight signals, build a static training set, then fine-tune on Hugging Face with **Trackio** for metrics.
+
+The walk-through below uses the **`postgres-sqlite-wire-adapter`** task as the reference pipeline.
+
+### Data collection and post-processing
+
+1. **Rollouts** — [`scripts/collect_trajectories.py`](scripts/collect_trajectories.py) was used to gather **20 episodes** on a **2× NVIDIA A100** host running **sglang**, with the agent powered by **[`Qwen/Qwen3.6-27B`](https://huggingface.co/Qwen/Qwen3.6-27B)** (Qwen 3.6 27B). Run id **pg-01** labels this batch in tooling and dataset names.
+2. **Backfill** — Some episodes finished without a persisted **`episode_reward`** because of a server-side bug; [`scripts/backfill_rewards.py`](scripts/backfill_rewards.py) was run to fill those fields from episode metadata.
+3. **Hindsight** — [`scripts/compute_hindsight_scores.py`](scripts/compute_hindsight_scores.py) was run with the same **Qwen 3.6 27B** stack to attach per-step hindsight quantities (HCAPO-style) for training. How that differs from the original HCAPO formulation (paper [2603.08754](https://arxiv.org/abs/2603.08754)) will be written up in [`training/README.md`](training/README.md) once that document is added to the repo.
+
+The **raw trajectory bundle** (per-episode `result.json`, `pi_session.jsonl`, `container_logs.txt`, optional `hindsight_scores.json`) is published on Hugging Face as **[`rycerzes/fswe-pg-01-traj-q36-27b`](https://huggingface.co/datasets/rycerzes/fswe-pg-01-traj-q36-27b)**.
+
+### HCAPO dataset build
+
+From a local `trajectories/` tree, the JSONL used for fine-tuning was produced with:
+
+```bash
+uv run python scripts/build_hcapo_dataset.py \
+  --input-dir trajectories \
+  --output-dir datasets \
+  --min-reward 0.05 \
+  --omega 1.0
+```
+
+The resulting **HCAPO training set** is **[`rycerzes/fswe-hcapo-pg-01-trajectories`](https://huggingface.co/datasets/rycerzes/fswe-hcapo-pg-01-trajectories)** (messages + step advantages derived from the pg-01 trajectories).
+
+### Fine-tuning run
+
+Training was launched with:
+
+```bash
+./scripts/launch_hf_space.sh --with-dataset-upload
+```
+
+That configuration runs **3 epochs** over **18 optimizer steps** on the Space-backed trainer (dataset upload + run as implemented in [`scripts/launch_hf_space.sh`](scripts/launch_hf_space.sh)).
+
+**Metrics dashboard (Trackio on Hugging Face):** [`rycerzes/trackio`](https://huggingface.co/spaces/rycerzes/trackio) — run name **`fswe-hcapo-pg-01-qwen36-27b`**.
+
+![Trackio dashboard: loss, epoch, learning rate, gradient norm, and global step for fswe-hcapo-pg-01-qwen36-27b](assets/training-trackio-dashboard.png)
+
+The screenshot above (smoothing ≈ 20 on the step axis) shows a **post-training** phase on the HCAPO dataset:
+
+- **Loss** decreases from roughly **1.0** at the start of the plotted window to about **0.75** by the end (**~25%** relative drop), with noisy raw traces but a clear downward trend in the smoothed curve.
+- **Epoch** advances linearly to approximately **2.7** over the **18** logged steps, consistent with targeting **3 epochs** in a short run.
+- **Learning rate** follows a **warmup then decay**: it rises toward a peak near the middle of the run (on the order of **3.5×10⁻⁶**) and falls toward roughly **1.5×10⁻⁶** by the final steps.
+- **Gradient norm** stays in a moderate band (mostly about **1.0–1.5**, ending near **1.2**), which suggests optimization without obvious gradient blow-ups for this snapshot.
+- **Global step** in the sidebar advances in line with the trainer (e.g. into the low tens over the same window)q
+
+Together, these curves read as a **successful small-scale sanity fine-tune**: loss improves steadily, the LR schedule behaves as expected, and gradients remain bounded.
 
 ## Repository layout
 
