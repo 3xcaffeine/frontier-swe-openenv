@@ -15,7 +15,7 @@ import shutil
 import sys
 from pathlib import Path
 
-TASKS = ("notebook", "postgres", "type-checker")
+TASKS = ("notebook", "postgres", "type-checker", "libexpat-to-x86asm")
 
 
 def prepare(task: str, out: Path, repo_root: Path) -> None:

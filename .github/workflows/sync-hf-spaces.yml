@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        task: [notebook, postgres, type-checker]
+        task: [notebook, postgres, type-checker, libexpat-to-x86asm]
     concurrency:
       group: sync-hf-space-${{ matrix.task }}
       cancel-in-progress: true

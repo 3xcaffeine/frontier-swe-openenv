@@ -61,3 +61,8 @@ from .dependent_type_checker import dtc_demo_config, dtc_training_config  # noqa
 
 register_task("dependent-type-checker", dtc_training_config, dtc_demo_config)
 register_task("type-checker", dtc_training_config, dtc_demo_config)
+
+from .libexpat_to_x86asm import libexpat_demo_config, libexpat_training_config  # noqa: E402
+
+register_task("libexpat-to-x86asm", libexpat_training_config, libexpat_demo_config)
+register_task("libexpat", libexpat_training_config, libexpat_demo_config)

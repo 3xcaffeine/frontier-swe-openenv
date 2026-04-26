@@ -1,0 +1,157 @@
+# libexpat-to-x86asm — Task Image
+#
+# Reimplements the upstream multi-stage build:
+#   Stage 1: package gcc + linker artifacts into an encrypted bundle
+#   Stage 2: extend openenv-base with nasm/binutils, purge gcc, encrypt the
+#            system libexpat, copy in the encrypted gcc bundle, ship expat
+#            source + verifier scripts. Agent never has gcc on PATH.
+#
+# Build (must build base first):
+#   podman build -f docker/Dockerfile.base                     -t openenv-base:latest .
+#   podman build -f docker/Dockerfile.libexpat-to-x86asm       -t frontier-swe-libexpat-to-x86asm:latest .
+#
+# Run:
+#   podman run -p 8000:8000 frontier-swe-libexpat-to-x86asm:latest
+
+# Global build arg — declared before any FROM so all stages can reference it.
+ARG BASE_IMAGE=openenv-base:latest
+
+# ---------- Stage 1: package gcc into an encrypted bundle ----------
+FROM ubuntu:22.04 AS gcc-packager
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc libc6-dev openssl && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /tmp/gcc-staging && \
+    ARCH_DIR=$(uname -m)-linux-gnu && \
+    tar czfh /tmp/gcc-staging/gcc-bundle.tar.gz \
+      /usr/bin/gcc /usr/bin/gcc-* \
+      /usr/bin/${ARCH_DIR}-gcc* \
+      /usr/bin/cc /usr/bin/cpp /usr/bin/cpp-* \
+      /usr/lib/gcc/ /usr/libexec/gcc/ \
+      /usr/bin/as \
+      /usr/lib/${ARCH_DIR}/crt*.o \
+      /usr/lib/${ARCH_DIR}/libc.so \
+      /usr/lib/${ARCH_DIR}/libc_nonshared.a \
+      /usr/lib/${ARCH_DIR}/libgcc_s.so* \
+      /usr/lib/${ARCH_DIR}/libm.so* \
+      /usr/lib/${ARCH_DIR}/libmvec.so* \
+      /usr/lib/${ARCH_DIR}/libisl.so* \
+      /usr/lib/${ARCH_DIR}/libmpc.so* \
+      /usr/lib/${ARCH_DIR}/libmpfr.so* \
+      /usr/lib/${ARCH_DIR}/libgmp.so* \
+      /usr/lib/${ARCH_DIR}/libopcodes*.so* \
+      /usr/lib/${ARCH_DIR}/libbfd*.so* \
+      /usr/lib/${ARCH_DIR}/libctf*.so* \
+      /usr/lib/${ARCH_DIR}/libsframe*.so* \
+      2>/dev/null; true
+
+RUN openssl enc -aes-256-cbc -pbkdf2 -pass "pass:a]9Kx#2vL!pQ7mZw@4rT&8jYc*0Wd6Fs" \
+      -in /tmp/gcc-staging/gcc-bundle.tar.gz \
+      -out /tmp/gcc-staging/gcc-bundle.enc
+
+# ---------- Stage 2: final agent environment (NO gcc) ----------
+FROM ${BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TASK_BUDGET_SECS=3600
+ENV FSWE_TASK_NAME=libexpat-to-x86asm
+ENV FSWE_TASK_MODE=training
+
+# Install the asm toolchain + tools the agent needs. python3 stays available
+# (OpenEnv server requires it) — diverges from upstream which hides python3,
+# but our agent has no shell-out path so this is acceptable.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      nasm \
+      binutils \
+      gdb \
+      strace \
+      libc6-dev \
+      openssl \
+      procps \
+      make \
+      file \
+      && rm -rf /var/lib/apt/lists/*
+
+# Purge every C compiler the base image inherited (build-essential brought
+# gcc-12 + cpp + g++). After this, agent assembly + linking with nasm/as/ld
+# remains, but compiling C is impossible.
+RUN apt-get purge -y \
+      gcc gcc-* g++ g++-* cpp cpp-* build-essential 2>/dev/null; \
+    rm -f /usr/bin/gcc /usr/bin/cc /usr/bin/g++ /usr/bin/cpp \
+          /usr/bin/c99 /usr/bin/c89 \
+          /usr/bin/x86_64-linux-gnu-gcc* /usr/bin/x86_64-linux-gnu-g++* && \
+    rm -f /usr/lib/x86_64-linux-gnu/libexpat.so /usr/lib/x86_64-linux-gnu/libexpat.a && \
+    apt-get autoremove -y && rm -rf /var/lib/apt/lists/* && \
+    ldconfig
+
+# Produce the encrypted libexpat bundle the verifier expects. We keep the
+# plaintext libexpat.so.1 in place because the OpenEnv server's python3 is
+# dynamically linked against it — removing it bricks the image. Anti-cheat
+# still catches agents that link/dlopen libexpat (NEEDED-tag check, asm
+# source scan), so leaving the file present does not weaken scoring. The
+# verifier's Step 0a decrypts onto /, which becomes a benign overwrite.
+RUN LIBEXPAT_KEY="Xr7@mQ!9wPz3#kN5vBjL&2sYdT*0hFcA" && \
+    apt-get update && apt-get install -y --no-install-recommends libexpat1 && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /usr/lib/x86_64-linux-gnu && \
+    LIBEXPAT_FILES=$(find /lib /usr/lib -maxdepth 4 -name 'libexpat.so.1*' 2>/dev/null | tr '\n' ' ') && \
+    if [ -z "$LIBEXPAT_FILES" ]; then \
+        echo "ERROR: libexpat1 installed but no .so found"; exit 1; \
+    fi && \
+    tar czfh /tmp/libexpat-bundle.tar.gz $LIBEXPAT_FILES && \
+    openssl enc -aes-256-cbc -pbkdf2 -pass "pass:$LIBEXPAT_KEY" \
+      -in /tmp/libexpat-bundle.tar.gz \
+      -out /usr/lib/x86_64-linux-gnu/.libexpat-bundle.enc && \
+    rm -f /tmp/libexpat-bundle.tar.gz && \
+    ldconfig
+
+# Stage the encrypted gcc bundle from Stage 1. Ensure the destination dir
+# exists (on aarch64 hosts /usr/lib/x86_64-linux-gnu/ may be absent).
+RUN mkdir -p /usr/lib/x86_64-linux-gnu
+COPY --from=gcc-packager /tmp/gcc-staging/gcc-bundle.enc \
+     /usr/lib/x86_64-linux-gnu/.gcc-bundle.enc
+
+# Workspace + reference C source for the agent to read.
+WORKDIR /app
+COPY tasks/libexpat-to-x86asm/environment/expat-src/ /app/expat-src/
+COPY tasks/libexpat-to-x86asm/environment/asm-port/ /app/asm-port/
+COPY tasks/libexpat-to-x86asm/instruction.md /app/instruction.md
+
+# Verifier scripts + tests bundle. We pre-extract the bundle so test.sh's
+# tar-x check no-ops on subsequent runs (the verifier accepts either state).
+RUN mkdir -p /opt/verifier /logs/verifier
+COPY tasks/libexpat-to-x86asm/tests/ /opt/verifier/
+RUN chmod +x /opt/verifier/test.sh && \
+    tar xzf /opt/verifier/tests-bundle.tar.gz -C /opt/verifier/ && \
+    rm /opt/verifier/tests-bundle.tar.gz && \
+    ls /opt/verifier/
+
+# Gate checks.
+COPY scripts/libexpat_gate_checks.sh /app/gate_checks.sh
+RUN chmod +x /app/gate_checks.sh
+
+# OpenEnv core code (overwrites whatever the base baked in so rubric / config
+# changes land without rebuilding base).
+COPY frontier_swe_env/ /opt/openenv/frontier_swe_env/
+COPY pyproject.toml /opt/openenv/pyproject.toml
+COPY scripts/ /opt/openenv/scripts/
+ENV PYTHONPATH="/opt/openenv"
+
+# Git baseline so L2 diff tracking scopes to the agent's actual workspace.
+RUN cd /app/asm-port \
+    && git config --global user.email "agent@frontier-swe-openenv" \
+    && git config --global user.name "agent" \
+    && git init && git add -A && git commit -m "initial scaffold"
+
+# Patch PiHarnessAdapter: remove --no-session so pi persists session .jsonl files.
+RUN find /opt/openenv-venv -path '*/harnesses/adapters/pi.py' -exec \
+    sed -i '/if "--no-session" not in cmd:/,/cmd.append("--no-session")/d' {} \;
+
+# Re-copy entrypoint.
+COPY docker/openenv_entrypoint.sh /app/openenv_entrypoint.sh
+RUN chmod +x /app/openenv_entrypoint.sh
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
